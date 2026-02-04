@@ -3,19 +3,20 @@ package query
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 
-	_ "modernc.org/sqlite" // SQL driver registration.
+	"github.com/negz/mnp/internal/sync"
 )
 
 // Command runs SQL queries against the MNP database.
 type Command struct {
-	DBPath string `default:"mnp.db" help:"Path to SQLite database."`
+	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
+	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
+	Force      bool   `help:"Force full re-sync of all data."`
+	Verbose    bool   `help:"Print sync progress."                                                                                                  short:"v"`
 
 	SQL string `arg:"" help:"SQL query to execute."`
 }
@@ -23,15 +24,19 @@ type Command struct {
 // Run executes the query command.
 func (c *Command) Run() error {
 	ctx := context.Background()
-	dbPath := expandPath(c.DBPath)
 
-	db, err := sql.Open("sqlite", dbPath)
+	store, err := sync.EnsureDB(ctx, sync.Options{
+		IPDBURL:    c.IPDBURL,
+		ArchiveURL: c.ArchiveURL,
+		Force:      c.Force,
+		Verbose:    c.Verbose,
+	})
 	if err != nil {
-		return fmt.Errorf("open database: %w", err)
+		return err
 	}
-	defer db.Close() //nolint:errcheck // Nothing to do with error on program exit.
+	defer store.Close() //nolint:errcheck // Nothing to do with error on program exit.
 
-	rows, err := db.QueryContext(ctx, c.SQL)
+	rows, err := store.DB().QueryContext(ctx, c.SQL)
 	if err != nil {
 		return fmt.Errorf("query: %w", err)
 	}
@@ -75,15 +80,4 @@ func (c *Command) Run() error {
 	}
 
 	return w.Flush()
-}
-
-func expandPath(path string) string {
-	if len(path) > 0 && path[0] == '~' {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return path
-		}
-		return filepath.Join(home, path[1:])
-	}
-	return path
 }

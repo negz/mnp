@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,13 +18,21 @@ import (
 )
 
 // Sync clones or updates the MNP data archive from the given repo URL.
-func Sync(ctx context.Context, repoURL, path string) error {
+// If verbose is true, progress is printed to stdout.
+func Sync(ctx context.Context, repoURL, path string, verbose bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
+	var progress io.Writer
+	if verbose {
+		progress = os.Stdout
+	}
+
 	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-		fmt.Printf("  Updating MNP archive at %s...\n", path)
+		if verbose {
+			fmt.Printf("Updating MNP archive...\n")
+		}
 		r, err := git.PlainOpen(path)
 		if err != nil {
 			return fmt.Errorf("open repo: %w", err)
@@ -32,32 +41,28 @@ func Sync(ctx context.Context, repoURL, path string) error {
 		if err != nil {
 			return fmt.Errorf("get worktree: %w", err)
 		}
-		if err := w.PullContext(ctx, &git.PullOptions{Progress: os.Stdout}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		if err := w.PullContext(ctx, &git.PullOptions{Progress: progress}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return err
 		}
 		return nil
 	}
 
-	fmt.Printf("  Cloning MNP archive to %s...\n", path)
+	if verbose {
+		fmt.Printf("Cloning MNP archive...\n")
+	}
 	_, err := git.PlainCloneContext(ctx, path, false, &git.CloneOptions{
 		URL:          repoURL,
 		Depth:        1,
 		SingleBranch: true,
-		Progress:     os.Stdout,
+		Progress:     progress,
 	})
 	return err
 }
 
-// Load reads the MNP archive and loads data into the store.
+// Load reads the MNP archive and loads all data into the store.
 func Load(ctx context.Context, store *db.Store, archivePath string) error {
-	// Load machines first (from machines.json)
-	if err := loadMachines(ctx, store, archivePath); err != nil {
-		return fmt.Errorf("load machines: %w", err)
-	}
-
-	// Load venues
-	if err := loadVenues(ctx, store, archivePath); err != nil {
-		return fmt.Errorf("load venues: %w", err)
+	if err := LoadGlobals(ctx, store, archivePath); err != nil {
+		return err
 	}
 
 	// Find all season directories
@@ -78,12 +83,28 @@ func Load(ctx context.Context, store *db.Store, archivePath string) error {
 
 		fmt.Printf("  Loading season %d...\n", seasonNum)
 		seasonPath := filepath.Join(archivePath, e.Name())
-		if err := loadSeason(ctx, store, seasonPath, seasonNum); err != nil {
+		if err := LoadSeason(ctx, store, seasonPath, seasonNum); err != nil {
 			return fmt.Errorf("load season %d: %w", seasonNum, err)
 		}
 	}
 
 	return nil
+}
+
+// LoadGlobals loads machines.json and venues.json from the archive root.
+func LoadGlobals(ctx context.Context, store *db.Store, archivePath string) error {
+	if err := loadMachines(ctx, store, archivePath); err != nil {
+		return fmt.Errorf("load machines: %w", err)
+	}
+	if err := loadVenues(ctx, store, archivePath); err != nil {
+		return fmt.Errorf("load venues: %w", err)
+	}
+	return nil
+}
+
+// LoadSeason loads a single season's data (teams, rosters, matches).
+func LoadSeason(ctx context.Context, store *db.Store, seasonPath string, seasonNum int) error {
+	return loadSeason(ctx, store, seasonPath, seasonNum)
 }
 
 func loadMachines(ctx context.Context, store *db.Store, archivePath string) error {

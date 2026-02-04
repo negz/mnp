@@ -53,6 +53,57 @@ func Schema() string {
 	return schema
 }
 
+// GetMetadata retrieves a metadata value by key.
+func (s *Store) GetMetadata(ctx context.Context, key string) (string, error) {
+	var value string
+	err := s.db.QueryRowContext(ctx, "SELECT value FROM sync_metadata WHERE key = ?", key).Scan(&value)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return value, err
+}
+
+// SetMetadata stores a metadata value by key.
+func (s *Store) SetMetadata(ctx context.Context, key, value string) error {
+	_, err := s.db.ExecContext(ctx,
+		"INSERT OR REPLACE INTO sync_metadata (key, value) VALUES (?, ?)",
+		key, value)
+	return err
+}
+
+// LoadedSeasons returns season numbers that have at least one match loaded.
+func (s *Store) LoadedSeasons(ctx context.Context) (map[int]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT DISTINCT s.number
+		FROM seasons s
+		JOIN matches m ON m.season_id = s.id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	seasons := make(map[int]bool)
+	for rows.Next() {
+		var n int
+		if err := rows.Scan(&n); err != nil {
+			return nil, err
+		}
+		seasons[n] = true
+	}
+	return seasons, rows.Err()
+}
+
+// MaxSeasonNumber returns the highest season number in the database, or 0 if none.
+func (s *Store) MaxSeasonNumber(ctx context.Context) (int, error) {
+	var n sql.NullInt64
+	err := s.db.QueryRowContext(ctx, "SELECT MAX(number) FROM seasons").Scan(&n)
+	if err != nil {
+		return 0, err
+	}
+	return int(n.Int64), nil
+}
+
 const schema = `
 -- Pinball machines (from MNP + IPDB metadata)
 --
@@ -164,4 +215,10 @@ CREATE INDEX IF NOT EXISTS idx_game_results_machine ON game_results(game_id);
 CREATE INDEX IF NOT EXISTS idx_games_machine ON games(machine_key);
 CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season_id);
 CREATE INDEX IF NOT EXISTS idx_teams_season ON teams(season_id);
+
+-- Sync metadata for tracking cache freshness
+CREATE TABLE IF NOT EXISTS sync_metadata (
+    key TEXT PRIMARY KEY,            -- e.g., 'ipdb_last_sync'
+    value TEXT NOT NULL              -- ISO timestamp or other value
+);
 `

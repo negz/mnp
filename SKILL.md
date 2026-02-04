@@ -10,7 +10,7 @@ Query Seattle's Monday Night Pinball league data using SQLite.
 ## Database Location
 
 ```
-~/control/negz/mnp/mnp.db
+$XDG_CACHE_HOME/mnp/mnp.db  (default: ~/.cache/mnp/mnp.db)
 ```
 
 ## Querying
@@ -24,13 +24,13 @@ cd ~/control/negz/mnp && ./mnp query "SELECT ..."
 Or use sqlite3 directly:
 
 ```bash
-sqlite3 -header -column ~/control/negz/mnp/mnp.db "SELECT ..."
+sqlite3 -header -column ~/.cache/mnp/mnp.db "SELECT ..."
 ```
 
 For complex queries, use a heredoc:
 
 ```bash
-sqlite3 -header -column ~/control/negz/mnp/mnp.db <<'SQL'
+sqlite3 -header -column ~/.cache/mnp/mnp.db <<'SQL'
 SELECT ...
 FROM ...
 SQL
@@ -219,14 +219,26 @@ ORDER BY mat.week;
 - Max 82 points per match (+ bonus points for full rosters)
 - Players can only play once per round
 
-## Refreshing Data
+## Data Sync
 
-Run the sync command from the repo directory to update the database:
+Data syncs automatically on first query or when needed:
+
+- **First run**: Full sync (~15-20s) - clones MNP archive, fetches IPDB
+- **Subsequent queries**: Incremental (~1s) - git pull + reload current season only
+- **IPDB refresh**: Weekly (machine metadata rarely changes)
+- **Completed seasons**: Cached permanently (immutable)
+
+### Flags
 
 ```bash
-cd ~/control/negz/mnp && ./mnp sync
+# Force full re-sync of all data
+./mnp query --force "SELECT ..."
+
+# Show sync progress
+./mnp query -v "SELECT ..."
 ```
 
-This clones/updates both source repos to `/tmp/mnp/` and re-imports all data:
-- MNP data archive (match results, rosters)
-- IPDB database (machine metadata - year, manufacturer, type)
+### Data Sources
+
+- MNP data archive: match results, rosters, teams, venues
+- IPDB database: machine metadata (year, manufacturer, type)
