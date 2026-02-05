@@ -21,9 +21,6 @@ import (
 )
 
 const (
-	// MatchStateComplete indicates a match has been played.
-	MatchStateComplete = "complete"
-
 	// RolePlayer is the default roster role.
 	RolePlayer = "P"
 )
@@ -480,11 +477,6 @@ func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64
 	var m matchJSON
 	if err := json.NewDecoder(f).Decode(&m); err != nil {
 		return fmt.Errorf("decode match: %w", err)
-	}
-
-	// Skip incomplete matches
-	if m.State != MatchStateComplete {
-		return nil
 	}
 
 	// Build player hash -> name map from lineups
