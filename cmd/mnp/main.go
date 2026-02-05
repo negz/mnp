@@ -7,15 +7,24 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/negz/mnp/cmd/mnp/machines"
 	"github.com/negz/mnp/cmd/mnp/query"
+	"github.com/negz/mnp/cmd/mnp/recommend"
 	"github.com/negz/mnp/cmd/mnp/schema"
+	"github.com/negz/mnp/cmd/mnp/venues"
+	"github.com/negz/mnp/internal/cache"
 )
 
 type cli struct {
 	Verbose bool `help:"Print sync progress." short:"v"`
 
-	Query  query.Command  `cmd:"" help:"Run a SQL query against the database."`
-	Schema schema.Command `cmd:"" help:"Print the database schema."`
+	Query     query.Command     `cmd:"" help:"Run a SQL query against the database."`
+	Schema    schema.Command    `cmd:"" help:"Print the database schema."`
+	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
+	Venues    venues.Command    `cmd:"" help:"List all venues."`
+	Machines  machines.Command  `cmd:"" help:"List all machines."`
+
+	DB cache.DB `embed:""`
 }
 
 func main() {
@@ -24,15 +33,18 @@ func main() {
 		kong.Name("mnp"),
 		kong.Description("Monday Night Pinball data tools."),
 		kong.UsageOnError(),
-		kong.Bind(newLogger(c.Verbose)),
 	)
-	ctx.FatalIfErrorf(ctx.Run())
-}
 
-func newLogger(verbose bool) *slog.Logger {
+	defer c.DB.Close() //nolint:errcheck // Not much we can do about this.
+
 	level := slog.LevelWarn
-	if verbose {
+	if c.Verbose {
 		level = slog.LevelInfo
 	}
-	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	c.DB.SetLogger(log)
+	ctx.Bind(log, &c.DB)
+
+	ctx.FatalIfErrorf(ctx.Run())
 }

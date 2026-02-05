@@ -1,0 +1,222 @@
+// Package recommend implements the recommend command.
+package recommend
+
+import (
+	"context"
+	"fmt"
+	"os"
+
+	"github.com/negz/mnp/internal/cache"
+	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/output"
+)
+
+// Command recommends which players should play a specific machine.
+type Command struct {
+	Team     string `arg:""                                     help:"Team key (e.g., CRA)."`
+	Machine  string `arg:""                                     help:"Machine key (e.g., TZ)."`
+	Venue    string `help:"Filter to venue-specific stats."     short:"e"`
+	Opponent string `help:"Compare against opponent's players." name:"vs"`
+}
+
+// Run executes the recommend command.
+func (c *Command) Run(d *cache.DB) error {
+	ctx := context.Background()
+
+	store, err := d.Store(ctx)
+	if err != nil {
+		return err
+	}
+
+	if c.Opponent != "" {
+		return c.runWithOpponent(ctx, store)
+	}
+
+	if c.Venue != "" {
+		return c.runWithVenue(ctx, store)
+	}
+
+	return c.runBasic(ctx, store)
+}
+
+// runBasic shows player stats for a team on a machine (global stats only).
+func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore) error {
+	stats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, "")
+	if err != nil {
+		return err
+	}
+
+	if len(stats) == 0 {
+		fmt.Printf("No data for %s on %s\n", c.Team, c.Machine)
+		return nil
+	}
+
+	return output.Table(os.Stdout,
+		[]string{"Player", "Games", "P50", "P75", "Max"},
+		statsToRows(stats),
+	)
+}
+
+// runWithVenue shows venue-specific stats with global fallback.
+func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error {
+	venueStats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, c.Venue)
+	if err != nil {
+		return err
+	}
+
+	globalStats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, "")
+	if err != nil {
+		return err
+	}
+
+	if len(venueStats) == 0 && len(globalStats) == 0 {
+		fmt.Printf("No data for %s on %s\n", c.Team, c.Machine)
+		return nil
+	}
+
+	if len(venueStats) > 0 {
+		fmt.Printf("At %s:\n\n", c.Venue)
+		if err := output.Table(os.Stdout,
+			[]string{"Player", "Games", "P50", "P75", "Max"},
+			statsToRows(venueStats),
+		); err != nil {
+			return err
+		}
+		fmt.Println()
+	}
+
+	// Mark players with no venue data
+	venuePlayerSet := make(map[string]bool)
+	for _, s := range venueStats {
+		venuePlayerSet[s.Name] = true
+	}
+
+	rows := make([][]string, 0, len(globalStats))
+	for _, s := range globalStats {
+		name := s.Name
+		if !venuePlayerSet[name] {
+			name += "*"
+		}
+		rows = append(rows, []string{
+			name,
+			fmt.Sprintf("%d", s.Games),
+			formatScore(s.P50Score),
+			formatScore(s.P75Score),
+			formatScore(float64(s.MaxScore)),
+		})
+	}
+
+	fmt.Println("Global (for context):")
+	fmt.Println()
+	if err := output.Table(os.Stdout,
+		[]string{"Player", "Games", "P50", "P75", "Max"},
+		rows,
+	); err != nil {
+		return err
+	}
+
+	// Print footnote if any players have no venue data
+	for _, s := range globalStats {
+		if !venuePlayerSet[s.Name] {
+			fmt.Printf("\n*No %s data\n", c.Venue)
+			break
+		}
+	}
+
+	return nil
+}
+
+// runWithOpponent shows comparison against opponent's players.
+func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) error {
+	ourStats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, c.Venue)
+	if err != nil {
+		return err
+	}
+
+	theirStats, err := store.GetPlayerMachineStats(ctx, c.Opponent, c.Machine, c.Venue)
+	if err != nil {
+		return err
+	}
+
+	if len(ourStats) == 0 && len(theirStats) == 0 {
+		fmt.Printf("No data for %s or %s on %s\n", c.Team, c.Opponent, c.Machine)
+		return nil
+	}
+
+	fmt.Printf("%s options:\n\n", c.Team)
+	if len(ourStats) > 0 {
+		if err := output.Table(os.Stdout,
+			[]string{"Player", "Games", "P50", "P75", "Max"},
+			statsToRows(ourStats),
+		); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println("(no data)")
+	}
+
+	fmt.Printf("\n%s likely players:\n\n", c.Opponent)
+	if len(theirStats) > 0 {
+		if err := output.Table(os.Stdout,
+			[]string{"Player", "Games", "P50", "P75", "Max"},
+			statsToRows(theirStats),
+		); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println("(no data)")
+	}
+
+	// Assessment
+	if len(ourStats) > 0 && len(theirStats) > 0 {
+		ourBest := ourStats[0]
+		theirBest := theirStats[0]
+		diff := ourBest.P50Score - theirBest.P50Score
+
+		var assessment string
+		switch {
+		case diff > 1_000_000:
+			assessment = fmt.Sprintf("%s outscores %s's best (%s) by ~%s P50. Strong pick.",
+				ourBest.Name, c.Opponent, theirBest.Name, formatScore(diff))
+		case diff < -1_000_000:
+			assessment = fmt.Sprintf("%s's best (%s) outscores %s by ~%s P50. Weak pick.",
+				c.Opponent, theirBest.Name, ourBest.Name, formatScore(-diff))
+		default:
+			assessment = fmt.Sprintf("%s and %s's best (%s) are roughly even. Contested.",
+				ourBest.Name, c.Opponent, theirBest.Name)
+		}
+
+		fmt.Printf("\nAssessment: %s\n", assessment)
+	}
+
+	return nil
+}
+
+// statsToRows converts PlayerStats to table rows.
+func statsToRows(stats []db.PlayerStats) [][]string {
+	rows := make([][]string, len(stats))
+	for i, s := range stats {
+		rows[i] = []string{
+			s.Name,
+			fmt.Sprintf("%d", s.Games),
+			formatScore(s.P50Score),
+			formatScore(s.P75Score),
+			formatScore(float64(s.MaxScore)),
+		}
+	}
+	return rows
+}
+
+// formatScore formats a pinball score with appropriate suffix.
+func formatScore(score float64) string {
+	switch {
+	case score >= 1_000_000_000:
+		return fmt.Sprintf("%.1fB", score/1_000_000_000)
+	case score >= 1_000_000:
+		return fmt.Sprintf("%.1fM", score/1_000_000)
+	case score >= 1_000:
+		return fmt.Sprintf("%.1fK", score/1_000)
+	default:
+		return fmt.Sprintf("%.0f", score)
+	}
+}

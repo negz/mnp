@@ -26,8 +26,28 @@ func Dir() string {
 	return filepath.Join(base, "mnp")
 }
 
-// EnsureDB opens or creates the cache database, initializing the schema.
-func EnsureDB(ctx context.Context) (*db.SQLiteStore, error) {
+// DB provides access to a synced MNP database.
+// It lazily opens and syncs the database on first use.
+type DB struct {
+	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
+	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
+	ForceSync  bool   `help:"Sync data before running command."                                                                                     name:"sync"                      short:"s"`
+
+	log   *slog.Logger
+	store *db.SQLiteStore
+}
+
+// SetLogger configures the logger for sync progress.
+func (d *DB) SetLogger(log *slog.Logger) {
+	d.log = log
+}
+
+// Store returns the database store, opening and syncing if needed.
+func (d *DB) Store(ctx context.Context) (*db.SQLiteStore, error) {
+	if d.store != nil {
+		return d.store, nil
+	}
+
 	cacheDir := Dir()
 
 	if err := os.MkdirAll(cacheDir, 0o750); err != nil {
@@ -45,78 +65,48 @@ func EnsureDB(ctx context.Context) (*db.SQLiteStore, error) {
 		return nil, fmt.Errorf("initialize database: %w", err)
 	}
 
-	return store, nil
-}
+	d.store = store
 
-// config holds sync configuration.
-type config struct {
-	ipdbURL    string
-	archiveURL string
-	force      bool
-	log        *slog.Logger
-}
-
-// Option configures sync behavior.
-type Option func(*config)
-
-// WithIPDBURL sets the IPDB database JSON URL.
-func WithIPDBURL(url string) Option {
-	return func(c *config) {
-		c.ipdbURL = url
+	if err := d.Sync(ctx); err != nil {
+		d.store.Close() //nolint:errcheck // Already returning error.
+		d.store = nil
+		return nil, err
 	}
+
+	return d.store, nil
 }
 
-// WithArchiveURL sets the MNP archive git repo URL.
-func WithArchiveURL(url string) Option {
-	return func(c *config) {
-		c.archiveURL = url
+// Close closes the database connection.
+func (d *DB) Close() error {
+	if d.store == nil {
+		return nil
 	}
-}
-
-// WithForce forces a full re-sync of all data.
-func WithForce(f bool) Option {
-	return func(c *config) {
-		c.force = f
-	}
-}
-
-// WithLogger sets the logger for sync progress output.
-func WithLogger(l *slog.Logger) Option {
-	return func(c *config) {
-		c.log = l
-	}
+	return d.store.Close()
 }
 
 // Sync synchronizes data from upstream sources (IPDB, MNP archive).
-// It respects staleness unless force is set.
-func Sync(ctx context.Context, store *db.SQLiteStore, opts ...Option) error {
-	cfg := &config{}
-	for _, o := range opts {
-		o(cfg)
-	}
-
+// It respects staleness unless ForceSync is set.
+func (d *DB) Sync(ctx context.Context) error {
 	cacheDir := Dir()
 	archivePath := filepath.Join(cacheDir, "mnp-data-archive")
 
-	// Create clients with stores injected
 	ipdbClient := ipdb.NewClient(filepath.Join(cacheDir, "ipdb"),
-		ipdb.WithURL(cfg.ipdbURL),
-		ipdb.WithLogger(cfg.log),
-		ipdb.WithStore(store),
+		ipdb.WithURL(d.IPDBURL),
+		ipdb.WithLogger(d.log),
+		ipdb.WithStore(d.store),
 	)
 
 	mnpClient := mnp.NewClient(archivePath,
-		mnp.WithRepoURL(cfg.archiveURL),
-		mnp.WithLogger(cfg.log),
-		mnp.WithStore(store),
+		mnp.WithRepoURL(d.ArchiveURL),
+		mnp.WithLogger(d.log),
+		mnp.WithStore(d.store),
 	)
 
-	// Each client handles its own staleness checking and loading
-	if err := ipdbClient.SyncIfStale(ctx, cfg.force); err != nil {
+	if err := ipdbClient.SyncIfStale(ctx, d.ForceSync); err != nil {
 		return err
 	}
 
-	if err := mnpClient.SyncIfStale(ctx, cfg.force); err != nil {
+	if err := mnpClient.SyncIfStale(ctx, d.ForceSync); err != nil {
 		return err
 	}
 

@@ -4,7 +4,6 @@ package query
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -14,29 +13,14 @@ import (
 
 // Command runs SQL queries against the MNP database.
 type Command struct {
-	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
-	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
-	Force      bool   `help:"Force full re-sync of all data."`
-
 	SQL string `arg:"" help:"SQL query to execute."`
 }
 
 // Run executes the query command.
-func (c *Command) Run(log *slog.Logger) error {
+func (c *Command) Run(db *cache.DB) error {
 	ctx := context.Background()
 
-	store, err := cache.EnsureDB(ctx)
-	if err != nil {
-		return err
-	}
-	defer store.Close() //nolint:errcheck // Nothing to do with error on program exit.
-
-	err = cache.Sync(ctx, store,
-		cache.WithIPDBURL(c.IPDBURL),
-		cache.WithArchiveURL(c.ArchiveURL),
-		cache.WithForce(c.Force),
-		cache.WithLogger(log),
-	)
+	store, err := db.Store(ctx)
 	if err != nil {
 		return err
 	}
