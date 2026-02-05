@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -47,10 +48,10 @@ func WithURL(url string) ClientOption {
 	}
 }
 
-// WithVerbose enables progress output.
-func WithVerbose(v bool) ClientOption {
+// WithLogger sets the logger for progress output.
+func WithLogger(l *slog.Logger) ClientOption {
 	return func(c *Client) {
-		c.verbose = v
+		c.log = l
 	}
 }
 
@@ -72,7 +73,7 @@ func WithTTL(d time.Duration) ClientOption {
 type Client struct {
 	cachePath string
 	url       string
-	verbose   bool
+	log       *slog.Logger
 	store     Store
 	ttl       time.Duration
 }
@@ -118,9 +119,7 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 		return nil
 	}
 
-	if c.verbose {
-		fmt.Println("Syncing IPDB machine metadata...")
-	}
+	c.log.Info("Syncing IPDB machine metadata")
 
 	if err := c.fetch(ctx); err != nil {
 		return fmt.Errorf("fetch IPDB: %w", err)
@@ -204,9 +203,7 @@ func (c *Client) load(ctx context.Context) error {
 		return fmt.Errorf("decode JSON: %w", err)
 	}
 
-	if c.verbose {
-		fmt.Printf("  Loading %d machines from IPDB...\n", len(database.Data))
-	}
+	c.log.Info("Loading machines from IPDB", "count", len(database.Data))
 
 	for _, m := range database.Data {
 		year := parseYear(m.DateOfManufacture)

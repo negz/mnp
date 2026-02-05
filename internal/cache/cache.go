@@ -4,6 +4,7 @@ package cache
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -52,7 +53,7 @@ type config struct {
 	ipdbURL    string
 	archiveURL string
 	force      bool
-	verbose    bool
+	log        *slog.Logger
 }
 
 // Option configures sync behavior.
@@ -79,10 +80,10 @@ func WithForce(f bool) Option {
 	}
 }
 
-// WithVerbose enables sync progress output.
-func WithVerbose(v bool) Option {
+// WithLogger sets the logger for sync progress output.
+func WithLogger(l *slog.Logger) Option {
 	return func(c *config) {
-		c.verbose = v
+		c.log = l
 	}
 }
 
@@ -100,13 +101,13 @@ func Sync(ctx context.Context, store *db.SQLiteStore, opts ...Option) error {
 	// Create clients with stores injected
 	ipdbClient := ipdb.NewClient(filepath.Join(cacheDir, "ipdb"),
 		ipdb.WithURL(cfg.ipdbURL),
-		ipdb.WithVerbose(cfg.verbose),
+		ipdb.WithLogger(cfg.log),
 		ipdb.WithStore(store),
 	)
 
 	mnpClient := mnp.NewClient(archivePath,
 		mnp.WithRepoURL(cfg.archiveURL),
-		mnp.WithVerbose(cfg.verbose),
+		mnp.WithLogger(cfg.log),
 		mnp.WithStore(store),
 	)
 

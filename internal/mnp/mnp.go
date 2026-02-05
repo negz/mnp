@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -78,10 +79,10 @@ func WithRepoURL(url string) ClientOption {
 	}
 }
 
-// WithVerbose enables progress output.
-func WithVerbose(v bool) ClientOption {
+// WithLogger sets the logger for progress output.
+func WithLogger(l *slog.Logger) ClientOption {
 	return func(c *Client) {
-		c.verbose = v
+		c.log = l
 	}
 }
 
@@ -96,7 +97,7 @@ func WithStore(s Store) ClientOption {
 type Client struct {
 	archivePath string
 	repoURL     string
-	verbose     bool
+	log         *slog.Logger
 	store       Store
 }
 
@@ -138,9 +139,7 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 
 	// Load each season
 	for _, s := range seasons {
-		if c.verbose {
-			fmt.Printf("Loading season %d...\n", s)
-		}
+		c.log.Info("Loading season", "season", s)
 		if err := c.loadSeason(ctx, s); err != nil {
 			return fmt.Errorf("load season %d: %w", s, err)
 		}
@@ -206,14 +205,12 @@ func (c *Client) pull(ctx context.Context) error {
 	}
 
 	var progress io.Writer
-	if c.verbose {
-		progress = os.Stdout
+	if c.log.Enabled(ctx, slog.LevelInfo) {
+		progress = os.Stderr
 	}
 
 	if _, err := os.Stat(filepath.Join(c.archivePath, ".git")); err == nil {
-		if c.verbose {
-			fmt.Printf("Updating MNP archive...\n")
-		}
+		c.log.Info("Updating MNP archive")
 		r, err := git.PlainOpen(c.archivePath)
 		if err != nil {
 			return fmt.Errorf("open repo: %w", err)
@@ -228,9 +225,7 @@ func (c *Client) pull(ctx context.Context) error {
 		return nil
 	}
 
-	if c.verbose {
-		fmt.Printf("Cloning MNP archive...\n")
-	}
+	c.log.Info("Cloning MNP archive")
 	_, err := git.PlainCloneContext(ctx, c.archivePath, false, &git.CloneOptions{
 		URL:          c.repoURL,
 		Depth:        1,
@@ -332,7 +327,7 @@ func (c *Client) loadSeason(ctx context.Context, seasonNum int) error {
 		}
 		matchPath := filepath.Join(matchesDir, e.Name())
 		if err := c.loadMatch(ctx, matchPath, seasonID); err != nil {
-			fmt.Printf("    Warning: failed to load %s: %v\n", e.Name(), err)
+			c.log.Warn("Failed to load match", "file", e.Name(), "error", err)
 		}
 	}
 

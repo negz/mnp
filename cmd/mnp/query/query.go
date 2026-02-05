@@ -4,6 +4,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -16,13 +17,12 @@ type Command struct {
 	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
 	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
 	Force      bool   `help:"Force full re-sync of all data."`
-	Verbose    bool   `help:"Print sync progress." short:"v"` //nolint:tagalign // Alignment with hidden/name tags above not useful.
 
 	SQL string `arg:"" help:"SQL query to execute."`
 }
 
 // Run executes the query command.
-func (c *Command) Run() error {
+func (c *Command) Run(log *slog.Logger) error {
 	ctx := context.Background()
 
 	store, err := cache.EnsureDB(ctx)
@@ -35,7 +35,7 @@ func (c *Command) Run() error {
 		cache.WithIPDBURL(c.IPDBURL),
 		cache.WithArchiveURL(c.ArchiveURL),
 		cache.WithForce(c.Force),
-		cache.WithVerbose(c.Verbose),
+		cache.WithLogger(log),
 	)
 	if err != nil {
 		return err
