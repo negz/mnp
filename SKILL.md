@@ -7,38 +7,62 @@ description: Query Monday Night Pinball league data. Use when analyzing MNP matc
 
 Query Seattle's Monday Night Pinball league data using SQLite.
 
-## Database Location
+## League & Match Rules
 
-```
-$XDG_CACHE_HOME/mnp/mnp.db  (default: ~/.cache/mnp/mnp.db)
-```
+**Full rules**: [Match Rules](https://www.mondaynightpinball.com/matchrules) | [League Rules](https://www.mondaynightpinball.com/leaguerules)
+
+### Match Structure
+
+Each match has 4 rounds:
+
+| Round | Type | Games | Points/Game | Max Points |
+|-------|------|-------|-------------|------------|
+| 1 | Doubles | 4 | 5 | 20 |
+| 2 | Singles | 7 | 3 | 21 |
+| 3 | Singles | 7 | 3 | 21 |
+| 4 | Doubles | 4 | 5 | 20 |
+
+- **Doubles scoring**: 1 point per opponent beaten + 1 bonus for highest combined team score (allows half-points like 4-1, 3-2)
+- **Singles scoring**: 2-1 win normally, 3-0 if you double opponent's score
+- Players can only play once per round
+
+### Total Match Scoring
+
+| Category | Max | How |
+|----------|-----|-----|
+| Gameplay | 82 | Sum of all game points |
+| Participation bonus | 9 | Full roster (10 players) each playing 3+ games |
+| Handicap | 15 | 1 point per 2 IPR below 50 |
+| **Total** | **106** | |
+
+### IPR (Individual Player Rating)
+
+IPR rates players 1-6 based on IFPA ranking and Matchplay.events rating:
+- 1 = novice (bottom 30%)
+- 6 = elite (top 5%)
+
+**Team IPR** = sum of lineup players' IPRs
+
+**Handicap formula**: `floor((50 - team_IPR) / 2)`, max 15 points
+
+Example: Team IPR of 19 → (50-19)/2 = 15.5 → **15 handicap points**
+
+### Strategic Implications
+
+- Lower-IPR teams get significant handicap advantage
+- A full 10-player roster with average IPR 3.6 = team IPR 36, handicap 7
+- Short-handed teams (fewer players) have lower IPR but also lose participation bonus
+- Machine selection matters: pick machines your players excel at, opponents struggle with
 
 ## Querying
-
-Use the mnp binary from the repo:
 
 ```bash
 cd ~/control/negz/mnp && ./mnp query "SELECT ..."
 ```
 
-Or use sqlite3 directly:
+Data syncs automatically on first use.
 
-```bash
-sqlite3 -header -column ~/.cache/mnp/mnp.db "SELECT ..."
-```
-
-For complex queries, use a heredoc:
-
-```bash
-sqlite3 -header -column ~/.cache/mnp/mnp.db <<'SQL'
-SELECT ...
-FROM ...
-SQL
-```
-
-## Schema
-
-Run `./mnp schema` to see the documented schema:
+### View Schema
 
 ```bash
 cd ~/control/negz/mnp && ./mnp schema
@@ -211,34 +235,7 @@ WHERE t.key = 'CRA' AND s.number = 23
 ORDER BY mat.week;
 ```
 
-## Match Rules Summary
+## Notes
 
-- 4 rounds per match: Doubles (R1) → Singles (R2) → Singles (R3) → Doubles (R4)
-- Doubles: 5 points per game, 4 games per round
-- Singles: 3 points per game, 7 games per round
-- Max 82 points per match (+ bonus points for full rosters)
-- Players can only play once per round
-
-## Data Sync
-
-Data syncs automatically on first query or when needed:
-
-- **First run**: Full sync (~15-20s) - clones MNP archive, fetches IPDB
-- **Subsequent queries**: Incremental (~1s) - git pull + reload current season only
-- **IPDB refresh**: Weekly (machine metadata rarely changes)
-- **Completed seasons**: Cached permanently (immutable)
-
-### Flags
-
-```bash
-# Force full re-sync of all data
-./mnp query --force "SELECT ..."
-
-# Show sync progress
-./mnp query -v "SELECT ..."
-```
-
-### Data Sources
-
-- MNP data archive: match results, rosters, teams, venues
-- IPDB database: machine metadata (year, manufacturer, type)
+- Points in the database are stored as **2x actual values** to handle half-points as integers (e.g., 3 points = 6, 2.5 points = 5)
+- Use `--force` flag to force a full data re-sync if needed
