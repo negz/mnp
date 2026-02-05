@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/negz/mnp/internal/sync"
+	"github.com/negz/mnp/internal/cache"
 )
 
 // Command runs SQL queries against the MNP database.
@@ -16,7 +16,7 @@ type Command struct {
 	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
 	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
 	Force      bool   `help:"Force full re-sync of all data."`
-	Verbose    bool   `help:"Print sync progress."                                                                                                  short:"v"`
+	Verbose    bool   `help:"Print sync progress." short:"v"` //nolint:tagalign // Alignment with hidden/name tags above not useful.
 
 	SQL string `arg:"" help:"SQL query to execute."`
 }
@@ -25,16 +25,21 @@ type Command struct {
 func (c *Command) Run() error {
 	ctx := context.Background()
 
-	store, err := sync.EnsureDB(ctx, sync.Options{
-		IPDBURL:    c.IPDBURL,
-		ArchiveURL: c.ArchiveURL,
-		Force:      c.Force,
-		Verbose:    c.Verbose,
-	})
+	store, err := cache.EnsureDB(ctx)
 	if err != nil {
 		return err
 	}
 	defer store.Close() //nolint:errcheck // Nothing to do with error on program exit.
+
+	err = cache.Sync(ctx, store,
+		cache.WithIPDBURL(c.IPDBURL),
+		cache.WithArchiveURL(c.ArchiveURL),
+		cache.WithForce(c.Force),
+		cache.WithVerbose(c.Verbose),
+	)
+	if err != nil {
+		return err
+	}
 
 	rows, err := store.DB().QueryContext(ctx, c.SQL)
 	if err != nil {

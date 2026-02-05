@@ -4,18 +4,19 @@ package db
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	_ "modernc.org/sqlite" // SQL driver registration.
 )
 
-// Store is a SQLite database for MNP data.
-type Store struct {
+// SQLiteStore is a SQLite database for MNP data.
+type SQLiteStore struct {
 	db *sql.DB
 }
 
 // Open opens or creates a SQLite database at the given path.
-func Open(ctx context.Context, path string) (*Store, error) {
+func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -27,21 +28,21 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 
-	return &Store{db: db}, nil
+	return &SQLiteStore{db: db}, nil
 }
 
 // Close closes the database.
-func (s *Store) Close() error {
+func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
 // DB returns the underlying database connection for direct queries.
-func (s *Store) DB() *sql.DB {
+func (s *SQLiteStore) DB() *sql.DB {
 	return s.db
 }
 
 // Init creates the database schema.
-func (s *Store) Init(ctx context.Context) error {
+func (s *SQLiteStore) Init(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
@@ -54,25 +55,31 @@ func Schema() string {
 }
 
 // GetMetadata retrieves a metadata value by key.
-func (s *Store) GetMetadata(ctx context.Context, key string) (string, error) {
+func (s *SQLiteStore) GetMetadata(ctx context.Context, key string) (string, error) {
 	var value string
 	err := s.db.QueryRowContext(ctx, "SELECT value FROM sync_metadata WHERE key = ?", key).Scan(&value)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil
 	}
-	return value, err
+	if err != nil {
+		return "", fmt.Errorf("get metadata %s: %w", key, err)
+	}
+	return value, nil
 }
 
 // SetMetadata stores a metadata value by key.
-func (s *Store) SetMetadata(ctx context.Context, key, value string) error {
+func (s *SQLiteStore) SetMetadata(ctx context.Context, key, value string) error {
 	_, err := s.db.ExecContext(ctx,
 		"INSERT OR REPLACE INTO sync_metadata (key, value) VALUES (?, ?)",
 		key, value)
-	return err
+	if err != nil {
+		return fmt.Errorf("set metadata %s: %w", key, err)
+	}
+	return nil
 }
 
 // LoadedSeasons returns season numbers that have at least one match loaded.
-func (s *Store) LoadedSeasons(ctx context.Context) (map[int]bool, error) {
+func (s *SQLiteStore) LoadedSeasons(ctx context.Context) (map[int]bool, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT DISTINCT s.number
 		FROM seasons s
@@ -95,7 +102,7 @@ func (s *Store) LoadedSeasons(ctx context.Context) (map[int]bool, error) {
 }
 
 // MaxSeasonNumber returns the highest season number in the database, or 0 if none.
-func (s *Store) MaxSeasonNumber(ctx context.Context) (int, error) {
+func (s *SQLiteStore) MaxSeasonNumber(ctx context.Context) (int, error) {
 	var n sql.NullInt64
 	err := s.db.QueryRowContext(ctx, "SELECT MAX(number) FROM seasons").Scan(&n)
 	if err != nil {

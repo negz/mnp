@@ -17,7 +17,7 @@ type Machine struct {
 }
 
 // UpsertMachine inserts or updates a machine.
-func (s *Store) UpsertMachine(ctx context.Context, m Machine) error {
+func (s *SQLiteStore) UpsertMachine(ctx context.Context, m Machine) error {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO machines (key, name, manufacturer, year, type, ipdb_id)
 		VALUES (?, ?, ?, ?, ?, ?)
@@ -40,7 +40,7 @@ type Season struct {
 }
 
 // UpsertSeason inserts or updates a season and returns its ID.
-func (s *Store) UpsertSeason(ctx context.Context, number int) (int64, error) {
+func (s *SQLiteStore) UpsertSeason(ctx context.Context, number int) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO seasons (number) VALUES (?)
 		ON CONFLICT(number) DO NOTHING
@@ -62,7 +62,7 @@ type Player struct {
 }
 
 // UpsertPlayer inserts or updates a player and returns their ID.
-func (s *Store) UpsertPlayer(ctx context.Context, name string) (int64, error) {
+func (s *SQLiteStore) UpsertPlayer(ctx context.Context, name string) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO players (name) VALUES (?)
 		ON CONFLICT(name) DO NOTHING
@@ -85,7 +85,7 @@ type Venue struct {
 }
 
 // UpsertVenue inserts or updates a venue and returns its ID.
-func (s *Store) UpsertVenue(ctx context.Context, key, name string) (int64, error) {
+func (s *SQLiteStore) UpsertVenue(ctx context.Context, key, name string) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO venues (key, name) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET name = excluded.name
@@ -110,7 +110,7 @@ type Team struct {
 }
 
 // UpsertTeam inserts or updates a team and returns its ID.
-func (s *Store) UpsertTeam(ctx context.Context, t Team) (int64, error) {
+func (s *SQLiteStore) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO teams (key, name, season_id, home_venue_id)
 		VALUES (?, ?, ?, ?)
@@ -131,7 +131,7 @@ func (s *Store) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 }
 
 // UpsertRoster adds a player to a team roster.
-func (s *Store) UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error {
+func (s *SQLiteStore) UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO rosters (player_id, team_id, role)
 		VALUES (?, ?, ?)
@@ -157,7 +157,7 @@ type Match struct {
 }
 
 // UpsertMatch inserts or updates a match and returns its ID.
-func (s *Store) UpsertMatch(ctx context.Context, m Match) (int64, error) {
+func (s *SQLiteStore) UpsertMatch(ctx context.Context, m Match) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO matches (key, season_id, week, date, home_team_id, away_team_id, venue_id, home_points, away_points)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -190,7 +190,7 @@ type Game struct {
 }
 
 // InsertGame inserts a game and returns its ID.
-func (s *Store) InsertGame(ctx context.Context, g Game) (int64, error) {
+func (s *SQLiteStore) InsertGame(ctx context.Context, g Game) (int64, error) {
 	isDoubles := 0
 	if g.IsDoubles {
 		isDoubles = 1
@@ -218,7 +218,7 @@ type GameResult struct {
 }
 
 // InsertGameResult inserts a game result.
-func (s *Store) InsertGameResult(ctx context.Context, r GameResult) error {
+func (s *SQLiteStore) InsertGameResult(ctx context.Context, r GameResult) error {
 	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO game_results (game_id, player_id, team_id, position, score, points_won, points_possible)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -235,7 +235,7 @@ func (s *Store) InsertGameResult(ctx context.Context, r GameResult) error {
 }
 
 // DeleteMatchGames deletes all games and results for a match (for re-import).
-func (s *Store) DeleteMatchGames(ctx context.Context, matchID int64) error {
+func (s *SQLiteStore) DeleteMatchGames(ctx context.Context, matchID int64) error {
 	if _, err := s.db.ExecContext(ctx, `
 		DELETE FROM game_results WHERE game_id IN (SELECT id FROM games WHERE match_id = ?)
 	`, matchID); err != nil {

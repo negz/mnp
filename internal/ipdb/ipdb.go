@@ -9,45 +9,84 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
+	"time"
 
 	"github.com/negz/mnp/internal/db"
 )
 
-// Sync downloads the IPDB database JSON file from the given URL.
-func Sync(ctx context.Context, url, path string) error {
-	if err := os.MkdirAll(path, 0o750); err != nil {
-		return fmt.Errorf("create directory: %w", err)
-	}
+// DefaultTTL is how long IPDB data is considered fresh before re-syncing.
+const DefaultTTL = 7 * 24 * time.Hour
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("create request: %w", err)
-	}
+const metadataKey = "ipdb_last_sync"
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetch IPDB: %w", err)
-	}
-	defer resp.Body.Close() //nolint:errcheck // Nothing useful to do with error.
+// MachineStore is the interface for storing machine data.
+type MachineStore interface {
+	UpsertMachine(ctx context.Context, m db.Machine) error
+}
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("fetch IPDB: %s", resp.Status)
-	}
+// MetadataStore is the interface for storing sync metadata.
+type MetadataStore interface {
+	GetMetadata(ctx context.Context, key string) (string, error)
+	SetMetadata(ctx context.Context, key, value string) error
+}
 
-	out, err := os.Create(filepath.Join(path, "ipdbdatabase.json")) //nolint:gosec // Path from CLI flag.
-	if err != nil {
-		return fmt.Errorf("create file: %w", err)
-	}
-	defer out.Close() //nolint:errcheck // Write already succeeded via io.Copy.
+// Store combines the interfaces needed by the IPDB client.
+type Store interface {
+	MachineStore
+	MetadataStore
+}
 
-	if _, err := io.Copy(out, resp.Body); err != nil {
-		return fmt.Errorf("write file: %w", err)
-	}
+// ClientOption configures a Client.
+type ClientOption func(*Client)
 
-	return nil
+// WithURL sets the IPDB database JSON URL.
+func WithURL(url string) ClientOption {
+	return func(c *Client) {
+		c.url = url
+	}
+}
+
+// WithVerbose enables progress output.
+func WithVerbose(v bool) ClientOption {
+	return func(c *Client) {
+		c.verbose = v
+	}
+}
+
+// WithStore sets the store for loading machine data.
+func WithStore(s Store) ClientOption {
+	return func(c *Client) {
+		c.store = s
+	}
+}
+
+// WithTTL sets how long cached data is considered fresh.
+func WithTTL(d time.Duration) ClientOption {
+	return func(c *Client) {
+		c.ttl = d
+	}
+}
+
+// Client syncs and loads IPDB machine metadata.
+type Client struct {
+	cachePath string
+	url       string
+	verbose   bool
+	store     Store
+	ttl       time.Duration
+}
+
+// NewClient creates a new IPDB client.
+func NewClient(cachePath string, opts ...ClientOption) *Client {
+	c := &Client{
+		cachePath: cachePath,
+		ttl:       DefaultTTL,
+	}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }
 
 // Machine represents a machine entry in the IPDB database.
@@ -64,11 +103,97 @@ type ipdbDatabase struct {
 	Data []Machine `json:"Data"`
 }
 
-// Load reads the IPDB database and loads machines into the store.
-func Load(ctx context.Context, store *db.Store, repoPath string) error {
-	jsonPath := filepath.Join(repoPath, "ipdbdatabase.json")
+// SyncIfStale syncs IPDB data if the cache is stale or force is true.
+// It fetches from the web, loads into the store, and updates the sync timestamp.
+func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
+	if c.store == nil {
+		return fmt.Errorf("no store configured")
+	}
 
-	f, err := os.Open(jsonPath) //nolint:gosec // Path from CLI flag.
+	stale, err := c.isStale(ctx, force)
+	if err != nil {
+		return err
+	}
+	if !stale {
+		return nil
+	}
+
+	if c.verbose {
+		fmt.Println("Syncing IPDB machine metadata...")
+	}
+
+	if err := c.fetch(ctx); err != nil {
+		return fmt.Errorf("fetch IPDB: %w", err)
+	}
+	if err := c.load(ctx); err != nil {
+		return fmt.Errorf("load IPDB: %w", err)
+	}
+	if err := c.store.SetMetadata(ctx, metadataKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("update IPDB sync time: %w", err)
+	}
+	return nil
+}
+
+// isStale returns true if the IPDB cache needs refreshing.
+func (c *Client) isStale(ctx context.Context, force bool) (bool, error) {
+	if force {
+		return true, nil
+	}
+
+	lastSync, err := c.store.GetMetadata(ctx, metadataKey)
+	if err != nil {
+		return false, fmt.Errorf("check IPDB sync time: %w", err)
+	}
+	if lastSync == "" {
+		return true, nil
+	}
+
+	t, err := time.Parse(time.RFC3339, lastSync)
+	if err != nil {
+		return true, nil //nolint:nilerr // Unparseable timestamp treated as stale.
+	}
+	return time.Since(t) > c.ttl, nil
+}
+
+// fetch downloads the IPDB database JSON file.
+func (c *Client) fetch(ctx context.Context) error {
+	if err := os.MkdirAll(c.cachePath, 0o750); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("fetch IPDB: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // Nothing useful to do with error.
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("fetch IPDB: %s", resp.Status)
+	}
+
+	out, err := os.Create(filepath.Join(c.cachePath, "ipdbdatabase.json"))
+	if err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+	defer out.Close() //nolint:errcheck // Write already succeeded via io.Copy.
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("write file: %w", err)
+	}
+
+	return nil
+}
+
+// load reads the IPDB database and loads machines into the store.
+func (c *Client) load(ctx context.Context) error {
+	jsonPath := filepath.Join(c.cachePath, "ipdbdatabase.json")
+
+	f, err := os.Open(jsonPath) //nolint:gosec // Path from config.
 	if err != nil {
 		return fmt.Errorf("open file: %w", err)
 	}
@@ -79,7 +204,9 @@ func Load(ctx context.Context, store *db.Store, repoPath string) error {
 		return fmt.Errorf("decode JSON: %w", err)
 	}
 
-	fmt.Printf("  Loading %d machines from IPDB...\n", len(database.Data))
+	if c.verbose {
+		fmt.Printf("  Loading %d machines from IPDB...\n", len(database.Data))
+	}
 
 	for _, m := range database.Data {
 		year := parseYear(m.DateOfManufacture)
@@ -88,7 +215,7 @@ func Load(ctx context.Context, store *db.Store, repoPath string) error {
 			continue
 		}
 
-		if err := store.UpsertMachine(ctx, db.Machine{
+		if err := c.store.UpsertMachine(ctx, db.Machine{
 			Key:          key,
 			Name:         m.Title,
 			Manufacturer: m.Manufacturer,
@@ -105,21 +232,18 @@ func Load(ctx context.Context, store *db.Store, repoPath string) error {
 
 // parseYear extracts the year from a date string like "1997-06" or "June, 1997".
 func parseYear(date string) int {
-	// Try YYYY-MM format first
-	if len(date) >= 4 {
-		if year, err := strconv.Atoi(date[:4]); err == nil && year > 1900 && year < 2100 {
-			return year
+	formats := []string{
+		"2006-01",       // YYYY-MM
+		"2006",          // YYYY
+		"January, 2006", // Month, YYYY
+		"January 2006",  // Month YYYY
+		"Jan 2006",      // Mon YYYY
+	}
+	for _, format := range formats {
+		if t, err := time.Parse(format, date); err == nil {
+			return t.Year()
 		}
 	}
-
-	// Try to find a 4-digit year anywhere in the string
-	re := regexp.MustCompile(`\b(19|20)\d{2}\b`)
-	if match := re.FindString(date); match != "" {
-		if year, err := strconv.Atoi(match); err == nil {
-			return year
-		}
-	}
-
 	return 0
 }
 

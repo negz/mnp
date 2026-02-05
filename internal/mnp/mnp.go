@@ -3,12 +3,14 @@ package mnp
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -17,23 +19,202 @@ import (
 	"github.com/negz/mnp/internal/db"
 )
 
-// Sync clones or updates the MNP data archive from the given repo URL.
-// If verbose is true, progress is printed to stdout.
-func Sync(ctx context.Context, repoURL, path string, verbose bool) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+const (
+	// MatchStateComplete indicates a match has been played.
+	MatchStateComplete = "complete"
+
+	// RolePlayer is the default roster role.
+	RolePlayer = "P"
+)
+
+// Store is the interface for MNP data storage operations.
+//
+//nolint:interfacebloat // Cohesive domain interface; all methods needed for MNP data loading.
+type Store interface {
+	// UpsertMachine inserts or updates a machine.
+	UpsertMachine(ctx context.Context, m db.Machine) error
+
+	// UpsertVenue inserts or updates a venue and returns its ID.
+	UpsertVenue(ctx context.Context, key, name string) (int64, error)
+
+	// UpsertSeason inserts or updates a season and returns its ID.
+	UpsertSeason(ctx context.Context, number int) (int64, error)
+
+	// UpsertTeam inserts or updates a team and returns its ID.
+	UpsertTeam(ctx context.Context, t db.Team) (int64, error)
+
+	// UpsertPlayer inserts or updates a player and returns their ID.
+	UpsertPlayer(ctx context.Context, name string) (int64, error)
+
+	// UpsertRoster adds a player to a team roster.
+	UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error
+
+	// UpsertMatch inserts or updates a match and returns its ID.
+	UpsertMatch(ctx context.Context, m db.Match) (int64, error)
+
+	// DeleteMatchGames deletes all games and results for a match (for re-import).
+	DeleteMatchGames(ctx context.Context, matchID int64) error
+
+	// InsertGame inserts a game and returns its ID.
+	InsertGame(ctx context.Context, g db.Game) (int64, error)
+
+	// InsertGameResult inserts a game result.
+	InsertGameResult(ctx context.Context, r db.GameResult) error
+
+	// LoadedSeasons returns season numbers that have at least one match loaded.
+	LoadedSeasons(ctx context.Context) (map[int]bool, error)
+
+	// DB returns the underlying database for direct queries.
+	DB() *sql.DB
+}
+
+// ClientOption configures a Client.
+type ClientOption func(*Client)
+
+// WithRepoURL sets the git repository URL.
+func WithRepoURL(url string) ClientOption {
+	return func(c *Client) {
+		c.repoURL = url
+	}
+}
+
+// WithVerbose enables progress output.
+func WithVerbose(v bool) ClientOption {
+	return func(c *Client) {
+		c.verbose = v
+	}
+}
+
+// WithStore sets the store for loading MNP data.
+func WithStore(s Store) ClientOption {
+	return func(c *Client) {
+		c.store = s
+	}
+}
+
+// Client syncs and loads MNP archive data.
+type Client struct {
+	archivePath string
+	repoURL     string
+	verbose     bool
+	store       Store
+}
+
+// NewClient creates a new MNP archive client.
+func NewClient(archivePath string, opts ...ClientOption) *Client {
+	c := &Client{archivePath: archivePath}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
+}
+
+// SyncIfStale syncs the git repo and loads any seasons that need updating.
+// A season needs loading if: forced, not yet loaded, or is the current (max) season.
+func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
+	if c.store == nil {
+		return fmt.Errorf("no store configured")
+	}
+
+	// Git pull (fast when up-to-date)
+	if err := c.pull(ctx); err != nil {
+		return fmt.Errorf("sync MNP archive: %w", err)
+	}
+
+	// Determine which seasons need loading
+	seasons, err := c.seasonsToLoad(ctx, force)
+	if err != nil {
+		return err
+	}
+
+	if len(seasons) == 0 {
+		return nil
+	}
+
+	// Load global data first
+	if err := c.loadGlobals(ctx); err != nil {
+		return fmt.Errorf("load global data: %w", err)
+	}
+
+	// Load each season
+	for _, s := range seasons {
+		if c.verbose {
+			fmt.Printf("Loading season %d...\n", s)
+		}
+		if err := c.loadSeason(ctx, s); err != nil {
+			return fmt.Errorf("load season %d: %w", s, err)
+		}
+	}
+
+	return nil
+}
+
+// seasonsToLoad returns which seasons need to be loaded into the store.
+func (c *Client) seasonsToLoad(ctx context.Context, force bool) ([]int, error) {
+	loaded, err := c.store.LoadedSeasons(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check loaded seasons: %w", err)
+	}
+
+	available, err := c.findSeasons()
+	if err != nil {
+		return nil, fmt.Errorf("find seasons: %w", err)
+	}
+	if len(available) == 0 {
+		return nil, nil // No seasons in archive yet
+	}
+
+	maxSeason := available[len(available)-1]
+	toLoad := make([]int, 0, len(available))
+	for _, s := range available {
+		if force || !loaded[s] || s == maxSeason {
+			toLoad = append(toLoad, s)
+		}
+	}
+	return toLoad, nil
+}
+
+// findSeasons returns available season numbers from the archive.
+func (c *Client) findSeasons() ([]int, error) {
+	entries, err := os.ReadDir(c.archivePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	seasons := make([]int, 0, len(entries))
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "season-") {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimPrefix(e.Name(), "season-"))
+		if err != nil {
+			continue
+		}
+		seasons = append(seasons, n)
+	}
+	sort.Ints(seasons)
+	return seasons, nil
+}
+
+// pull clones or updates the MNP data archive.
+func (c *Client) pull(ctx context.Context) error {
+	if err := os.MkdirAll(filepath.Dir(c.archivePath), 0o750); err != nil {
 		return fmt.Errorf("create directory: %w", err)
 	}
 
 	var progress io.Writer
-	if verbose {
+	if c.verbose {
 		progress = os.Stdout
 	}
 
-	if _, err := os.Stat(filepath.Join(path, ".git")); err == nil {
-		if verbose {
+	if _, err := os.Stat(filepath.Join(c.archivePath, ".git")); err == nil {
+		if c.verbose {
 			fmt.Printf("Updating MNP archive...\n")
 		}
-		r, err := git.PlainOpen(path)
+		r, err := git.PlainOpen(c.archivePath)
 		if err != nil {
 			return fmt.Errorf("open repo: %w", err)
 		}
@@ -47,11 +228,11 @@ func Sync(ctx context.Context, repoURL, path string, verbose bool) error {
 		return nil
 	}
 
-	if verbose {
+	if c.verbose {
 		fmt.Printf("Cloning MNP archive...\n")
 	}
-	_, err := git.PlainCloneContext(ctx, path, false, &git.CloneOptions{
-		URL:          repoURL,
+	_, err := git.PlainCloneContext(ctx, c.archivePath, false, &git.CloneOptions{
+		URL:          c.repoURL,
 		Depth:        1,
 		SingleBranch: true,
 		Progress:     progress,
@@ -59,56 +240,19 @@ func Sync(ctx context.Context, repoURL, path string, verbose bool) error {
 	return err
 }
 
-// Load reads the MNP archive and loads all data into the store.
-func Load(ctx context.Context, store *db.Store, archivePath string) error {
-	if err := LoadGlobals(ctx, store, archivePath); err != nil {
-		return err
-	}
-
-	// Find all season directories
-	entries, err := os.ReadDir(archivePath)
-	if err != nil {
-		return fmt.Errorf("read archive: %w", err)
-	}
-
-	for _, e := range entries {
-		if !e.IsDir() || !strings.HasPrefix(e.Name(), "season-") {
-			continue
-		}
-
-		seasonNum, err := strconv.Atoi(strings.TrimPrefix(e.Name(), "season-"))
-		if err != nil {
-			continue
-		}
-
-		fmt.Printf("  Loading season %d...\n", seasonNum)
-		seasonPath := filepath.Join(archivePath, e.Name())
-		if err := LoadSeason(ctx, store, seasonPath, seasonNum); err != nil {
-			return fmt.Errorf("load season %d: %w", seasonNum, err)
-		}
-	}
-
-	return nil
-}
-
-// LoadGlobals loads machines.json and venues.json from the archive root.
-func LoadGlobals(ctx context.Context, store *db.Store, archivePath string) error {
-	if err := loadMachines(ctx, store, archivePath); err != nil {
+// loadGlobals loads machines.json and venues.json from the archive root.
+func (c *Client) loadGlobals(ctx context.Context) error {
+	if err := c.loadMachines(ctx); err != nil {
 		return fmt.Errorf("load machines: %w", err)
 	}
-	if err := loadVenues(ctx, store, archivePath); err != nil {
+	if err := c.loadVenues(ctx); err != nil {
 		return fmt.Errorf("load venues: %w", err)
 	}
 	return nil
 }
 
-// LoadSeason loads a single season's data (teams, rosters, matches).
-func LoadSeason(ctx context.Context, store *db.Store, seasonPath string, seasonNum int) error {
-	return loadSeason(ctx, store, seasonPath, seasonNum)
-}
-
-func loadMachines(ctx context.Context, store *db.Store, archivePath string) error {
-	f, err := os.Open(filepath.Join(archivePath, "machines.json")) //nolint:gosec // Internal archive path.
+func (c *Client) loadMachines(ctx context.Context) error {
+	f, err := os.Open(filepath.Join(c.archivePath, "machines.json"))
 	if err != nil {
 		return fmt.Errorf("open machines.json: %w", err)
 	}
@@ -123,7 +267,7 @@ func loadMachines(ctx context.Context, store *db.Store, archivePath string) erro
 	}
 
 	for _, m := range machines {
-		if err := store.UpsertMachine(ctx, db.Machine{
+		if err := c.store.UpsertMachine(ctx, db.Machine{
 			Key:  m.Key,
 			Name: m.Name,
 		}); err != nil {
@@ -134,8 +278,8 @@ func loadMachines(ctx context.Context, store *db.Store, archivePath string) erro
 	return nil
 }
 
-func loadVenues(ctx context.Context, store *db.Store, archivePath string) error {
-	f, err := os.Open(filepath.Join(archivePath, "venues.json")) //nolint:gosec // Internal archive path.
+func (c *Client) loadVenues(ctx context.Context) error {
+	f, err := os.Open(filepath.Join(c.archivePath, "venues.json"))
 	if err != nil {
 		return fmt.Errorf("open venues.json: %w", err)
 	}
@@ -150,7 +294,7 @@ func loadVenues(ctx context.Context, store *db.Store, archivePath string) error 
 	}
 
 	for _, v := range venues {
-		if _, err := store.UpsertVenue(ctx, v.Key, v.Name); err != nil {
+		if _, err := c.store.UpsertVenue(ctx, v.Key, v.Name); err != nil {
 			return err
 		}
 	}
@@ -158,14 +302,17 @@ func loadVenues(ctx context.Context, store *db.Store, archivePath string) error 
 	return nil
 }
 
-func loadSeason(ctx context.Context, store *db.Store, seasonPath string, seasonNum int) error {
-	seasonID, err := store.UpsertSeason(ctx, seasonNum)
+// loadSeason loads a single season's data (teams, rosters, matches).
+func (c *Client) loadSeason(ctx context.Context, seasonNum int) error {
+	seasonPath := filepath.Join(c.archivePath, fmt.Sprintf("season-%d", seasonNum))
+
+	seasonID, err := c.store.UpsertSeason(ctx, seasonNum)
 	if err != nil {
 		return err
 	}
 
 	// Load season.json for teams and rosters
-	if err := loadSeasonJSON(ctx, store, seasonPath, seasonID); err != nil {
+	if err := c.loadSeasonJSON(ctx, seasonPath, seasonID); err != nil {
 		return fmt.Errorf("load season.json: %w", err)
 	}
 
@@ -184,7 +331,7 @@ func loadSeason(ctx context.Context, store *db.Store, seasonPath string, seasonN
 			continue
 		}
 		matchPath := filepath.Join(matchesDir, e.Name())
-		if err := loadMatch(ctx, store, matchPath, seasonID); err != nil {
+		if err := c.loadMatch(ctx, matchPath, seasonID); err != nil {
 			fmt.Printf("    Warning: failed to load %s: %v\n", e.Name(), err)
 		}
 	}
@@ -203,7 +350,7 @@ type seasonJSON struct {
 	} `json:"teams"`
 }
 
-func loadSeasonJSON(ctx context.Context, store *db.Store, seasonPath string, seasonID int64) error {
+func (c *Client) loadSeasonJSON(ctx context.Context, seasonPath string, seasonID int64) error {
 	f, err := os.Open(filepath.Join(seasonPath, "season.json")) //nolint:gosec // Internal archive path.
 	if err != nil {
 		return fmt.Errorf("open season.json: %w", err)
@@ -219,10 +366,14 @@ func loadSeasonJSON(ctx context.Context, store *db.Store, seasonPath string, sea
 		// Get venue ID
 		var venueID int64
 		if t.Venue != "" {
-			venueID, _ = store.UpsertVenue(ctx, t.Venue, t.Venue)
+			var err error
+			venueID, err = c.store.UpsertVenue(ctx, t.Venue, t.Venue)
+			if err != nil {
+				return fmt.Errorf("upsert venue %s: %w", t.Venue, err)
+			}
 		}
 
-		teamID, err := store.UpsertTeam(ctx, db.Team{
+		teamID, err := c.store.UpsertTeam(ctx, db.Team{
 			Key:         t.Key,
 			Name:        t.Name,
 			SeasonID:    seasonID,
@@ -234,11 +385,11 @@ func loadSeasonJSON(ctx context.Context, store *db.Store, seasonPath string, sea
 
 		// Load roster
 		for _, p := range t.Roster {
-			playerID, err := store.UpsertPlayer(ctx, p.Name)
+			playerID, err := c.store.UpsertPlayer(ctx, p.Name)
 			if err != nil {
 				return err
 			}
-			if err := store.UpsertRoster(ctx, playerID, teamID, "P"); err != nil {
+			if err := c.store.UpsertRoster(ctx, playerID, teamID, RolePlayer); err != nil {
 				return err
 			}
 		}
@@ -324,7 +475,7 @@ func buildPlayerResults(g gameJSON, homeTeamID, awayTeamID int64, isDoubles bool
 	return results
 }
 
-func loadMatch(ctx context.Context, store *db.Store, matchPath string, seasonID int64) error {
+func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64) error {
 	f, err := os.Open(matchPath) //nolint:gosec // Internal archive path.
 	if err != nil {
 		return fmt.Errorf("open match file: %w", err)
@@ -337,7 +488,7 @@ func loadMatch(ctx context.Context, store *db.Store, matchPath string, seasonID 
 	}
 
 	// Skip incomplete matches
-	if m.State != "complete" {
+	if m.State != MatchStateComplete {
 		return nil
 	}
 
@@ -353,21 +504,25 @@ func loadMatch(ctx context.Context, store *db.Store, matchPath string, seasonID 
 	// Get venue ID
 	var venueID int64
 	if m.Venue.Key != "" {
-		venueID, _ = store.UpsertVenue(ctx, m.Venue.Key, m.Venue.Name)
+		var err error
+		venueID, err = c.store.UpsertVenue(ctx, m.Venue.Key, m.Venue.Name)
+		if err != nil {
+			return fmt.Errorf("upsert venue %s: %w", m.Venue.Key, err)
+		}
 	}
 
 	// Get team IDs
-	homeTeamID, err := getTeamID(ctx, store, m.Home.Key, seasonID)
+	homeTeamID, err := c.getTeamID(ctx, m.Home.Key, seasonID)
 	if err != nil {
 		return fmt.Errorf("get home team: %w", err)
 	}
-	awayTeamID, err := getTeamID(ctx, store, m.Away.Key, seasonID)
+	awayTeamID, err := c.getTeamID(ctx, m.Away.Key, seasonID)
 	if err != nil {
 		return fmt.Errorf("get away team: %w", err)
 	}
 
 	week, _ := strconv.Atoi(m.Week)
-	matchID, err := store.UpsertMatch(ctx, db.Match{
+	matchID, err := c.store.UpsertMatch(ctx, db.Match{
 		Key:        m.Key,
 		SeasonID:   seasonID,
 		Week:       week,
@@ -383,14 +538,14 @@ func loadMatch(ctx context.Context, store *db.Store, matchPath string, seasonID 
 	}
 
 	// Delete existing games for this match (for re-import)
-	if err := store.DeleteMatchGames(ctx, matchID); err != nil {
+	if err := c.store.DeleteMatchGames(ctx, matchID); err != nil {
 		return err
 	}
 
-	return loadMatchGames(ctx, store, matchID, m.Rounds, homeTeamID, awayTeamID, playerNames)
+	return c.loadMatchGames(ctx, matchID, m.Rounds, homeTeamID, awayTeamID, playerNames)
 }
 
-func loadMatchGames(ctx context.Context, store *db.Store, matchID int64, rounds []roundJSON, homeTeamID, awayTeamID int64, playerNames map[string]string) error {
+func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []roundJSON, homeTeamID, awayTeamID int64, playerNames map[string]string) error {
 	for _, r := range rounds {
 		isDoubles := r.N == 1 || r.N == 4
 		pointsPossible := 3 // singles
@@ -403,7 +558,7 @@ func loadMatchGames(ctx context.Context, store *db.Store, matchID int64, rounds 
 				continue
 			}
 
-			gameID, err := store.InsertGame(ctx, db.Game{
+			gameID, err := c.store.InsertGame(ctx, db.Game{
 				MatchID:    matchID,
 				Round:      r.N,
 				MachineKey: g.Machine,
@@ -413,7 +568,7 @@ func loadMatchGames(ctx context.Context, store *db.Store, matchID int64, rounds 
 				return err
 			}
 
-			if err := insertGameResults(ctx, store, gameID, g, homeTeamID, awayTeamID, playerNames, pointsPossible, isDoubles); err != nil {
+			if err := c.insertGameResults(ctx, gameID, g, homeTeamID, awayTeamID, playerNames, pointsPossible, isDoubles); err != nil {
 				return err
 			}
 		}
@@ -421,7 +576,7 @@ func loadMatchGames(ctx context.Context, store *db.Store, matchID int64, rounds 
 	return nil
 }
 
-func insertGameResults(ctx context.Context, store *db.Store, gameID int64, g gameJSON, homeTeamID, awayTeamID int64, playerNames map[string]string, pointsPossible int, isDoubles bool) error {
+func (c *Client) insertGameResults(ctx context.Context, gameID int64, g gameJSON, homeTeamID, awayTeamID int64, playerNames map[string]string, pointsPossible int, isDoubles bool) error {
 	for _, p := range buildPlayerResults(g, homeTeamID, awayTeamID, isDoubles) {
 		if p.hash == "" {
 			continue
@@ -432,12 +587,12 @@ func insertGameResults(ctx context.Context, store *db.Store, gameID int64, g gam
 			continue // Unknown player
 		}
 
-		playerID, err := store.UpsertPlayer(ctx, name)
+		playerID, err := c.store.UpsertPlayer(ctx, name)
 		if err != nil {
 			return err
 		}
 
-		if err := store.InsertGameResult(ctx, db.GameResult{
+		if err := c.store.InsertGameResult(ctx, db.GameResult{
 			GameID:         gameID,
 			PlayerID:       playerID,
 			TeamID:         p.teamID,
@@ -452,9 +607,9 @@ func insertGameResults(ctx context.Context, store *db.Store, gameID int64, g gam
 	return nil
 }
 
-func getTeamID(ctx context.Context, store *db.Store, key string, seasonID int64) (int64, error) {
+func (c *Client) getTeamID(ctx context.Context, key string, seasonID int64) (int64, error) {
 	var id int64
-	err := store.DB().QueryRowContext(ctx,
+	err := c.store.DB().QueryRowContext(ctx,
 		"SELECT id FROM teams WHERE key = ? AND season_id = ?",
 		key, seasonID).Scan(&id)
 	if err != nil {
