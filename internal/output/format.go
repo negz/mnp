@@ -19,23 +19,23 @@ func FormatScore(score float64) string {
 	}
 }
 
-// FormatP75 formats a P75 score with relative strength annotation. The
-// leagueP75 is the league-wide P75 for the same machine. If leagueP75 is zero
+// FormatP50 formats a P50 score with relative strength annotation. The
+// leagueP50 is the league-wide P50 for the same machine. If leagueP50 is zero
 // (no league data), the annotation is omitted.
-func FormatP75(p75, leagueP75 float64) string {
-	score := FormatScore(p75)
-	if leagueP75 == 0 {
+func FormatP50(p50, leagueP50 float64) string {
+	score := FormatScore(p50)
+	if leagueP50 == 0 {
 		return score
 	}
-	return score + " " + FormatRelStr(p75, leagueP75)
+	return score + " " + FormatRelStr(p50, leagueP50)
 }
 
-// FormatRelStr formats relative strength as a percentage vs league P75.
-func FormatRelStr(p75, leagueP75 float64) string {
-	if leagueP75 == 0 {
+// FormatRelStr formats relative strength as a percentage vs league P50.
+func FormatRelStr(p50, leagueP50 float64) string {
+	if leagueP50 == 0 {
 		return ""
 	}
-	pct := (p75 - leagueP75) / leagueP75 * 100
+	pct := (p50 - leagueP50) / leagueP50 * 100
 	rounded := int(math.Round(pct))
 	switch {
 	case rounded > 0:
@@ -47,10 +47,10 @@ func FormatRelStr(p75, leagueP75 float64) string {
 	}
 }
 
-// RelStr computes relative strength as a percentage vs league P75.
-func RelStr(p75, leagueP75 float64) float64 {
-	if leagueP75 == 0 {
+// RelStr computes relative strength as a percentage vs league P50.
+func RelStr(p50, leagueP50 float64) float64 {
+	if leagueP50 == 0 {
 		return 0
 	}
-	return (p75 - leagueP75) / leagueP75 * 100
+	return (p50 - leagueP50) / leagueP50 * 100
 }

@@ -10,8 +10,7 @@ type PlayerStats struct {
 	Name     string
 	Games    int
 	P50Score float64 // Median (50th percentile)
-	P75Score float64 // 75th percentile
-	MaxScore int64
+	P90Score float64 // 90th percentile
 }
 
 // TeamMachineStats contains aggregated stats for a team on a specific machine.
@@ -19,15 +18,14 @@ type TeamMachineStats struct {
 	MachineKey string
 	Games      int
 	P50Score   float64 // Median (50th percentile)
-	P75Score   float64 // 75th percentile
-	MaxScore   int64
+	P90Score   float64 // 90th percentile
 	TopPlayers []TopPlayer
 }
 
-// TopPlayer is a player's P75 score on a machine.
+// TopPlayer is a player's P50 score on a machine.
 type TopPlayer struct {
 	Name     string
-	P75Score float64
+	P50Score float64
 }
 
 // GetTeamMachineStats returns per-machine stats for a team's current roster.
@@ -35,7 +33,7 @@ type TopPlayer struct {
 // the team (latest season with that team key).
 // If venueKey is non-empty, filters to games played at that venue.
 // Results are ordered by play count descending (most-played machines first).
-// Top 2 players per machine (by P75) are included.
+// Top 2 players per machine (by P50) are included.
 func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
 	stats, err := s.getTeamMachineAgg(ctx, teamKey, venueKey)
 	if err != nil {
@@ -54,7 +52,7 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 	return stats, nil
 }
 
-// getTeamMachineAgg returns per-machine aggregate stats (P50, P75, max) for a
+// getTeamMachineAgg returns per-machine aggregate stats (P50, P90) for a
 // team's current roster.
 func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
 	query := `
@@ -104,8 +102,7 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
 			 AND s.rn = (ma.total + 1) / 2) as p50,
 			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total * 3 + 3) / 4) as p75,
-			(SELECT MAX(score) FROM scores s WHERE s.machine_key = ma.machine_key) as max_score
+			 AND s.rn = (ma.total * 9 + 9) / 10) as p90
 		FROM machine_agg ma
 		ORDER BY games DESC
 	`
@@ -119,7 +116,7 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	var stats []TeamMachineStats
 	for rows.Next() {
 		var ts TeamMachineStats
-		if err := rows.Scan(&ts.MachineKey, &ts.Games, &ts.P50Score, &ts.P75Score, &ts.MaxScore); err != nil {
+		if err := rows.Scan(&ts.MachineKey, &ts.Games, &ts.P50Score, &ts.P90Score); err != nil {
 			return nil, fmt.Errorf("scan team machine stats: %w", err)
 		}
 		stats = append(stats, ts)
@@ -132,7 +129,7 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	return stats, nil
 }
 
-// getTopPlayers returns the top 2 players by P75 score for each machine,
+// getTopPlayers returns the top 2 players by P50 score for each machine,
 // keyed by machine key.
 func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]TopPlayer, error) {
 	query := `
@@ -174,26 +171,27 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 
 	query += `
 		),
-		player_p75 AS (
+		player_p50 AS (
 			SELECT DISTINCT
 				machine_key,
+				player_id,
 				name,
 				(SELECT score FROM player_scores ps2
 				 WHERE ps2.machine_key = ps1.machine_key
 				   AND ps2.player_id = ps1.player_id
-				   AND ps2.rn = (ps1.total * 3 + 3) / 4
-				) as p75
+				   AND ps2.rn = (ps1.total + 1) / 2
+				) as p50
 			FROM player_scores ps1
 		),
 		ranked AS (
 			SELECT
 				machine_key,
 				name,
-				p75,
-				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY p75 DESC) as rn
-			FROM player_p75
+				p50,
+				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY p50 DESC) as rn
+			FROM player_p50
 		)
-		SELECT machine_key, name, p75
+		SELECT machine_key, name, p50
 		FROM ranked
 		WHERE rn <= 2
 		ORDER BY machine_key, rn
@@ -208,11 +206,11 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 	result := make(map[string][]TopPlayer)
 	for rows.Next() {
 		var machineKey, name string
-		var p75 float64
-		if err := rows.Scan(&machineKey, &name, &p75); err != nil {
+		var p50 float64
+		if err := rows.Scan(&machineKey, &name, &p50); err != nil {
 			return nil, fmt.Errorf("scan top player: %w", err)
 		}
-		result[machineKey] = append(result[machineKey], TopPlayer{Name: name, P75Score: p75})
+		result[machineKey] = append(result[machineKey], TopPlayer{Name: name, P50Score: p50})
 	}
 
 	if err := rows.Err(); err != nil {
@@ -222,9 +220,9 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 	return result, nil
 }
 
-// GetLeagueP75 returns the league-wide P75 score for each machine. League P75
+// GetLeagueP50 returns the league-wide P50 score for each machine. League P50
 // is computed across all scores by players on any team's current roster.
-func (s *SQLiteStore) GetLeagueP75(ctx context.Context) (map[string]float64, error) {
+func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, error) {
 	query := `
 		WITH current_roster_all AS (
 			SELECT DISTINCT r.player_id
@@ -251,28 +249,28 @@ func (s *SQLiteStore) GetLeagueP75(ctx context.Context) (map[string]float64, err
 		SELECT
 			ma.machine_key,
 			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total * 3 + 3) / 4) as p75
+			 AND s.rn = (ma.total + 1) / 2) as p50
 		FROM machine_agg ma
 	`
 
 	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, fmt.Errorf("query league P75: %w", err)
+		return nil, fmt.Errorf("query league P50: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
 	result := make(map[string]float64)
 	for rows.Next() {
 		var key string
-		var p75 float64
-		if err := rows.Scan(&key, &p75); err != nil {
-			return nil, fmt.Errorf("scan league P75: %w", err)
+		var p50 float64
+		if err := rows.Scan(&key, &p50); err != nil {
+			return nil, fmt.Errorf("scan league P50: %w", err)
 		}
-		result[key] = p75
+		result[key] = p50
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate league P75: %w", err)
+		return nil, fmt.Errorf("iterate league P50: %w", err)
 	}
 
 	return result, nil
@@ -284,14 +282,6 @@ func (s *SQLiteStore) GetLeagueP75(ctx context.Context) (map[string]float64, err
 // If venueKey is non-empty, filters to games played at that venue.
 // Results are ordered by P50 score descending.
 func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machineKey, venueKey string) ([]PlayerStats, error) {
-	// Get current roster players (from latest season with this team key).
-	// Then get their stats across all time, regardless of which team they
-	// played for when they got those stats.
-	//
-	// Uses window functions to compute percentiles:
-	// 1. ROW_NUMBER orders each player's scores
-	// 2. COUNT gives total games per player
-	// 3. Correlated subqueries select P50 and P75 positions
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id
@@ -304,7 +294,7 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			  )
 		),
 		player_scores AS (
-			SELECT 
+			SELECT
 				p.id as player_id,
 				p.name,
 				gr.score,
@@ -330,16 +320,15 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			SELECT DISTINCT player_id, name, total
 			FROM player_scores
 		)
-		SELECT 
+		SELECT
 			pa.name,
 			pa.total as games,
-			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id 
+			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
 			 AND ps.rn = (pa.total + 1) / 2) as p50,
-			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id 
-			 AND ps.rn = (pa.total * 3 + 3) / 4) as p75,
-			(SELECT MAX(score) FROM player_scores ps WHERE ps.player_id = pa.player_id) as max_score
+			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
+			 AND ps.rn = (pa.total * 9 + 9) / 10) as p90
 		FROM player_agg pa
-		ORDER BY p75 DESC
+		ORDER BY p50 DESC
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -351,7 +340,7 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 	var stats []PlayerStats
 	for rows.Next() {
 		var ps PlayerStats
-		if err := rows.Scan(&ps.Name, &ps.Games, &ps.P50Score, &ps.P75Score, &ps.MaxScore); err != nil {
+		if err := rows.Scan(&ps.Name, &ps.Games, &ps.P50Score, &ps.P90Score); err != nil {
 			return nil, fmt.Errorf("scan player stats: %w", err)
 		}
 		stats = append(stats, ps)
