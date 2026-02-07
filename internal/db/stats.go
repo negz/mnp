@@ -222,6 +222,62 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 	return result, nil
 }
 
+// GetLeagueP75 returns the league-wide P75 score for each machine. League P75
+// is computed across all scores by players on any team's current roster.
+func (s *SQLiteStore) GetLeagueP75(ctx context.Context) (map[string]float64, error) {
+	query := `
+		WITH current_roster_all AS (
+			SELECT DISTINCT r.player_id
+			FROM rosters r
+			JOIN teams t ON t.id = r.team_id
+			WHERE t.season_id = (SELECT MAX(season_id) FROM teams)
+		),
+		scores AS (
+			SELECT
+				g.machine_key,
+				gr.score,
+				ROW_NUMBER() OVER (PARTITION BY g.machine_key ORDER BY gr.score) as rn,
+				COUNT(*) OVER (PARTITION BY g.machine_key) as total
+			FROM game_results gr
+			JOIN players p ON p.id = gr.player_id
+			JOIN games g ON g.id = gr.game_id
+			WHERE p.id IN (SELECT player_id FROM current_roster_all)
+			  AND g.machine_key IS NOT NULL
+		),
+		machine_agg AS (
+			SELECT DISTINCT machine_key, total
+			FROM scores
+		)
+		SELECT
+			ma.machine_key,
+			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
+			 AND s.rn = (ma.total * 3 + 3) / 4) as p75
+		FROM machine_agg ma
+	`
+
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("query league P75: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	result := make(map[string]float64)
+	for rows.Next() {
+		var key string
+		var p75 float64
+		if err := rows.Scan(&key, &p75); err != nil {
+			return nil, fmt.Errorf("scan league P75: %w", err)
+		}
+		result[key] = p75
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate league P75: %w", err)
+	}
+
+	return result, nil
+}
+
 // GetPlayerMachineStats returns stats for players on a team's current roster.
 // Stats are aggregated across all seasons, but only for players currently on
 // the team (latest season with that team key).

@@ -28,19 +28,25 @@ func (c *Command) Run(d *cache.DB) error {
 		return err
 	}
 
+	leagueP75, err := store.GetLeagueP75(ctx)
+	if err != nil {
+		return err
+	}
+	lp75 := leagueP75[c.Machine]
+
 	if c.Opponent != "" {
-		return c.runWithOpponent(ctx, store)
+		return c.runWithOpponent(ctx, store, lp75)
 	}
 
 	if c.Venue != "" {
-		return c.runWithVenue(ctx, store)
+		return c.runWithVenue(ctx, store, lp75)
 	}
 
-	return c.runBasic(ctx, store)
+	return c.runBasic(ctx, store, lp75)
 }
 
 // runBasic shows player stats for a team on a machine (global stats only).
-func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore) error {
+func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, lp75 float64) error {
 	stats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, "")
 	if err != nil {
 		return err
@@ -52,13 +58,13 @@ func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore) error {
 	}
 
 	return output.Table(os.Stdout,
-		[]string{"Player", "Games", "P50", "P75", "Max"},
-		statsToRows(stats),
+		[]string{"Player", "Games", "P50", "P75 (vs Avg)", "Max"},
+		statsToRows(stats, lp75),
 	)
 }
 
 // runWithVenue shows venue-specific stats with global fallback.
-func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error {
+func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, lp75 float64) error {
 	venueStats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, c.Venue)
 	if err != nil {
 		return err
@@ -77,15 +83,14 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 	if len(venueStats) > 0 {
 		fmt.Printf("At %s:\n\n", c.Venue)
 		if err := output.Table(os.Stdout,
-			[]string{"Player", "Games", "P50", "P75", "Max"},
-			statsToRows(venueStats),
+			[]string{"Player", "Games", "P50", "P75 (vs Avg)", "Max"},
+			statsToRows(venueStats, lp75),
 		); err != nil {
 			return err
 		}
 		fmt.Println()
 	}
 
-	// Mark players with no venue data
 	venuePlayerSet := make(map[string]bool)
 	for _, s := range venueStats {
 		venuePlayerSet[s.Name] = true
@@ -101,7 +106,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 			name,
 			fmt.Sprintf("%d", s.Games),
 			output.FormatScore(s.P50Score),
-			output.FormatScore(s.P75Score),
+			output.FormatP75(s.P75Score, lp75),
 			output.FormatScore(float64(s.MaxScore)),
 		})
 	}
@@ -109,13 +114,12 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 	fmt.Println("Global (for context):")
 	fmt.Println()
 	if err := output.Table(os.Stdout,
-		[]string{"Player", "Games", "P50", "P75", "Max"},
+		[]string{"Player", "Games", "P50", "P75 (vs Avg)", "Max"},
 		rows,
 	); err != nil {
 		return err
 	}
 
-	// Print footnote if any players have no venue data
 	for _, s := range globalStats {
 		if !venuePlayerSet[s.Name] {
 			fmt.Printf("\n*No %s data\n", c.Venue)
@@ -127,7 +131,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 }
 
 // runWithOpponent shows comparison against opponent's players.
-func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) error {
+func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore, lp75 float64) error {
 	ourStats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, c.Venue)
 	if err != nil {
 		return err
@@ -146,8 +150,8 @@ func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) er
 	fmt.Printf("%s options:\n\n", c.Team)
 	if len(ourStats) > 0 {
 		if err := output.Table(os.Stdout,
-			[]string{"Player", "Games", "P50", "P75", "Max"},
-			statsToRows(ourStats),
+			[]string{"Player", "Games", "P50", "P75 (vs Avg)", "Max"},
+			statsToRows(ourStats, lp75),
 		); err != nil {
 			return err
 		}
@@ -158,8 +162,8 @@ func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) er
 	fmt.Printf("\n%s likely players:\n\n", c.Opponent)
 	if len(theirStats) > 0 {
 		if err := output.Table(os.Stdout,
-			[]string{"Player", "Games", "P50", "P75", "Max"},
-			statsToRows(theirStats),
+			[]string{"Player", "Games", "P50", "P75 (vs Avg)", "Max"},
+			statsToRows(theirStats, lp75),
 		); err != nil {
 			return err
 		}
@@ -167,7 +171,6 @@ func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) er
 		fmt.Println("(no data)")
 	}
 
-	// Assessment
 	if len(ourStats) > 0 && len(theirStats) > 0 {
 		ourBest := ourStats[0]
 		theirBest := theirStats[0]
@@ -193,14 +196,14 @@ func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) er
 }
 
 // statsToRows converts PlayerStats to table rows.
-func statsToRows(stats []db.PlayerStats) [][]string {
+func statsToRows(stats []db.PlayerStats, lp75 float64) [][]string {
 	rows := make([][]string, len(stats))
 	for i, s := range stats {
 		rows[i] = []string{
 			s.Name,
 			fmt.Sprintf("%d", s.Games),
 			output.FormatScore(s.P50Score),
-			output.FormatScore(s.P75Score),
+			output.FormatP75(s.P75Score, lp75),
 			output.FormatScore(float64(s.MaxScore)),
 		}
 	}
