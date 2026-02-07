@@ -174,31 +174,45 @@ mnp matchup AAB CRA PYC
 
 | Machine | CRA P50 | CRA Likely | PYC P50 | PYC Likely | Edge |
 |---------|---------|------------|---------|------------|------|
-| Fathom | 446.0K | 2.3M | 258.4K | 258.4K | CRA 781% |
-| JW | 75.0M | 103.4M | 9.2M | 15.7M | CRA 559% |
-| Godzilla | 192.9M | 347.3M | 62.2M | 61.2M | CRA 467% |
-| TAF | 69.1M | 69.0M | 37.7M | 91.4M | PYC 32% |
-| FOO | 76.2M | 52.0M | 126.5M | 114.0M | PYC 119% |
-
-Machines where one team has data but the other doesn't show just the team
-name in the Edge column (e.g. `CRA`) with no percentage.
-
-Footer summarizes advantages:
+| Fathom | 446.0K | 2.3M | 258.4K | 258.4K | CRA 781% ▲ |
+| JW | 75.0M | 103.4M | 9.2M | 15.7M | CRA 559% △ |
+| Godzilla | 192.9M | 347.3M | 62.2M | 61.2M | CRA 467% ▲ |
+| TAF | 69.1M | 69.0M | 37.7M | 91.4M | PYC 32% △ |
+| FOO | 76.2M | 52.0M | 126.5M | 114.0M | PYC 119% ▼ |
 
 ```
+▲ high confidence  △ medium  ▼ low (based on likely players' games)
 CRA advantages: Fathom, JW, Godzilla, UXMEN, ...
 PYC advantages: TAF, FOO
 ```
 
 - **P50**: Team-wide median (whole roster's performance on this machine)
 - **Likely**: Average P50 of the two players with the most games on this
-  machine. Represents what the team will likely score when they send their most
-  likely players.
-- **Edge**: Percentage difference between the two Likely columns.
+  machine (no minimum game threshold — see confidence indicator). Represents
+  what the team will likely score when they send their most likely players.
+- **Edge**: Percentage difference between the two Likely columns, decorated
+  with a confidence indicator.
+
+Machines where one team has data but the other doesn't show just the team
+name in the Edge column (e.g. `CRA`) with no percentage.
+
+**Confidence indicator**: Each edge is decorated with ▲/△/▼ based on how
+much data backs the Likely values being compared. Confidence is determined
+by the average game count of each team's top 2 players on that machine,
+taking the minimum across both teams:
+
+- **▲** (high): Both teams' likely players average 10+ games
+- **△** (medium): Both teams' likely players average 3–9 games
+- **▼** (low): Either team's likely players average fewer than 3 games
 
 The gap between P50 and Likely is informative — a large gap means the team
 has specialists on that machine. A small gap means their roster is evenly
 spread.
+
+Note: `scout` applies a 3-game minimum for Likely Players, but `matchup`
+does not. In a matchup you may be forced to respond to your opponent's
+picks, so you want to see the best a team has even if based on a small
+sample. The confidence indicator flags when this is the case.
 
 Use `scout` for more detail on who the likely players are and their
 individual stats.
@@ -380,7 +394,9 @@ Useful for looking up short codes when using other commands.
 | `matchup` | Edge % (first team's Likely vs second) | Same-machine comparison — shows where your likely players beat theirs |
 
 **Other displayed metrics**:
-- Game count (sample size / confidence)
+- Game count (sample size / confidence in `scout` and `recommend`)
+- Confidence indicator (▲/△/▼ on `matchup` edge, based on likely players'
+  game counts)
 
 ## Data Requirements
 

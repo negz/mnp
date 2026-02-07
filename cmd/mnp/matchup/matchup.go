@@ -67,13 +67,14 @@ func (c *Command) Run(d *cache.DB) error {
 		l2 := likelyScore(s2.LikelyPlayers)
 
 		e := edgePct(l1, l2)
+		conf := confidence(s1.LikelyPlayers, s2.LikelyPlayers)
 		rows = append(rows, machineRow{
 			machine:  s1.MachineKey,
 			p50t1:    output.FormatScore(s1.P50Score),
 			likelyt1: formatLikely(l1),
 			p50t2:    output.FormatScore(s2.P50Score),
 			likelyt2: formatLikely(l2),
-			edge:     formatEdge(e, c.Team1, c.Team2),
+			edge:     formatEdge(e, c.Team1, c.Team2, conf),
 			edgeVal:  e,
 		})
 		delete(stats2ByMachine, s1.MachineKey)
@@ -93,7 +94,7 @@ func (c *Command) Run(d *cache.DB) error {
 			likelyt1: "-",
 			p50t2:    output.FormatScore(s2.P50Score),
 			likelyt2: formatLikely(l2),
-			edge:     formatEdge(e, c.Team1, c.Team2),
+			edge:     formatEdge(e, c.Team1, c.Team2, confLow),
 			edgeVal:  e,
 		})
 	}
@@ -151,7 +152,38 @@ func edgePct(l1, l2 float64) float64 {
 	return (l1 - l2) / lo * 100
 }
 
-func formatEdge(pct float64, team1, team2 string) string {
+const (
+	confHigh   = "▲"
+	confMedium = "△"
+	confLow    = "▼"
+)
+
+func confidence(players1, players2 []db.LikelyPlayer) string {
+	avg1 := avgGames(players1)
+	avg2 := avgGames(players2)
+	minAvg := min(avg1, avg2)
+	switch {
+	case minAvg >= 10:
+		return confHigh
+	case minAvg >= 3:
+		return confMedium
+	default:
+		return confLow
+	}
+}
+
+func avgGames(players []db.LikelyPlayer) float64 {
+	if len(players) == 0 {
+		return 0
+	}
+	var total int
+	for _, p := range players {
+		total += p.Games
+	}
+	return float64(total) / float64(len(players))
+}
+
+func formatEdge(pct float64, team1, team2, conf string) string {
 	if math.IsInf(pct, 0) || pct > 1e15 || pct < -1e15 {
 		if pct > 0 {
 			return team1
@@ -161,9 +193,9 @@ func formatEdge(pct float64, team1, team2 string) string {
 	rounded := int(math.Round(pct))
 	switch {
 	case rounded > 0:
-		return fmt.Sprintf("%s %d%%", team1, rounded)
+		return fmt.Sprintf("%s %d%% %s", team1, rounded, conf)
 	case rounded < 0:
-		return fmt.Sprintf("%s %d%%", team2, -rounded)
+		return fmt.Sprintf("%s %d%% %s", team2, -rounded, conf)
 	default:
 		return "Even"
 	}
@@ -185,6 +217,7 @@ func printAnalysis(rows []machineRow, team1, team2 string) {
 	}
 
 	fmt.Println()
+	fmt.Println(confHigh + " high confidence  " + confMedium + " medium  " + confLow + " low (based on likely players' games)")
 
 	var adv1, adv2, contested []string
 	for _, r := range rows {
