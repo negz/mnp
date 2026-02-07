@@ -13,7 +13,7 @@ Captains preparing for matches need answers to predictable questions:
 - Who should play each machine?
 
 Pre-baked commands can answer these reliably, hiding schema complexity and
-surfacing the right metrics (average score, not win rate).
+surfacing the right metrics (P50/P90 scores, not win rate).
 
 ## Match Flow Context
 
@@ -33,16 +33,20 @@ plan before match night.
 
 ## Design Principles
 
-1. **Score-based, not win-rate-based**: Average score is more predictive than
+1. **Score-based, not win-rate-based**: P50/P90 scores are more predictive than
    win rate, which is polluted by opponent strength.
 
-2. **Venue-specific with global fallback**: Venue data is most relevant but
+2. **Relative strength for cross-machine comparison**: Raw scores can't be
+   compared across machines (2B on AFM is average; 500M on GOT is elite).
+   Scores are normalized as % above/below league-wide P50 per machine.
+
+3. **Venue-specific with global fallback**: Venue data is most relevant but
    often sparse. Show both when useful.
 
-3. **Opponent context optional but valuable**: Recommendations improve when
+4. **Opponent context optional but valuable**: Recommendations improve when
    you know who you're playing against.
 
-4. **Planning, not live support**: Commands generate game plans for the week
+5. **Planning, not live support**: Commands generate game plans for the week
    before, not real-time decisions at the venue.
 
 ## Commands
@@ -53,6 +57,8 @@ plan before match night.
 | `scout` | Team strengths/weaknesses (general or at venue) |
 | `matchup` | Head-to-head team comparison at venue |
 | `recommend` | Drill-down: who should play a specific machine |
+| `venues` | List all venues with keys |
+| `machines` | List all machines with keys |
 
 > **Note**: Examples below use markdown tables for readability. Actual CLI output
 > will use bordered ASCII tables for terminal display.
@@ -85,43 +91,44 @@ TEAM IPR: CRA 32 (handicap 9) vs PYC 38 (handicap 6)
 YOUR PICKING ROUNDS:
 
   R1 Doubles (away picks):
-    Recommended picks:
-      1. TZ    → Alice (IPR 4, avg 52M) + Bob (IPR 3, avg 38M)
-                 vs PYC best: Eve (avg 25M) + Frank (avg 16M)
-                 Edge: +49M combined, likely 5-0
-      2. MM    → Carol (IPR 2, avg 35M) + Dave (IPR 3, avg 32M)
-                 vs PYC best: Gina (avg 18M) + Hank (avg 12M)
-                 Edge: +37M combined, likely 5-0
-      3. AFM   → Eve (IPR 2, avg 28M) + Frank (IPR 2, avg 25M)
-                 vs PYC best: Iris (avg 15M) + Jack (avg 9M)
-                 Edge: +29M combined, likely 5-0
-      4. LOTR  → Gina (IPR 1, avg 18M) + Hank (IPR 1, avg 15M)
-                 vs PYC best: Kate (avg 22M) + Leo (avg 18M)
-                 Edge: -7M combined, likely 1-4
+    Recommended picks (sorted by your edge over opponent):
+      1. TZ    → Alice (IPR 4, P50 42M) + Bob (IPR 3, P50 30M)
+                 vs PYC best: Eve (P50 20M) + Frank (P50 12M)
+                 You +30% vs avg, them +10% → Edge CRA +20%
+      2. MM    → Carol (IPR 2, P50 28M) + Dave (IPR 3, P50 25M)
+                 vs PYC best: Gina (P50 14M) + Hank (P50 10M)
+                 You +40% vs avg, them -15% → Edge CRA +55%
+      3. AFM   → Eve (IPR 2, P50 22M) + Frank (IPR 2, P50 20M)
+                 vs PYC best: Iris (P50 12M) + Jack (P50 8M)
+                 You +15% vs avg, them -12% → Edge CRA +27%
+      4. LOTR  → Gina (IPR 1, P50 14M) + Hank (IPR 1, P50 12M)
+                 vs PYC best: Kate (P50 18M) + Leo (P50 15M)
+                 You -10% vs avg, them +5% → Edge PYC +15%
 
   R3 Singles (away picks):
-    Recommended picks:
-      1. TZ    → Alice (avg 52M) vs PYC best Eve (avg 38M), Edge +14M
-      2. GB    → Bob (avg 45M) vs PYC best Frank (avg 35M), Edge +10M
+    Recommended picks (sorted by your edge over opponent):
+      1. TZ    → Alice (P50 42M, +30%) vs PYC best Eve (P50 28M, +10%), Edge CRA +20%
+      2. GB    → Bob (P50 35M, +25%) vs PYC best Frank (P50 28M, +5%), Edge CRA +20%
       ...
 
 THEIR LIKELY PICKS (prepare responses):
+  Predicted by opponent's relative strength (sorted strongest first):
 
   R2 Singles (home picks):
     PYC likely picks & your best responses:
-      TZ   → they send Eve (avg 38M)    → respond Carol (avg 35M), -3M
-      MM   → they send Frank (avg 40M)  → respond Alice (avg 48M), +8M
-      AFM  → they send Gina (avg 32M)   → respond Bob (avg 30M), -2M
+      MM   → they send Frank (P50 32M, +40%)  → respond Alice (P50 38M, +45%), Edge CRA +5%
+      TZ   → they send Eve (P50 28M, +10%)    → respond Carol (P50 26M, +5%), Edge PYC +5%
+      AFM  → they send Gina (P50 25M, +8%)    → respond Bob (P50 24M, +5%), Edge PYC +3%
       ...
 
   R4 Doubles (home picks):
     PYC likely picks & your best responses:
-      TZ   → Eve (avg 25M) + Frank (avg 16M) → respond Alice (52M) + Bob (38M), +49M
+      MM   → Frank + Gina (+40%) → respond Carol + Dave (+35%), Edge PYC +5%
       ...
 
 SUMMARY:
-  - Strong picks: TZ, MM, GB (you have clear edge)
-  - Avoid: LOTR, BSD (they're stronger)
+  - Strong picks: TZ, GB (your relative strength >> theirs)
+  - Avoid: LOTR, BSD (they're stronger relative to league avg)
   - Key players: Alice (your best on 5 machines), Eve (their best on 4)
   - Watch out: If they pick TSPP, you have no good counter
 ```
@@ -145,18 +152,23 @@ mnp scout <team> [--venue <venue>]
 mnp scout PYC
 ```
 
-Shows team's performance across all machines they've played (any venue):
+Shows current roster's performance across all machines they've played (any
+venue). Sorted by play count (games by current roster players only).
 
-| Machine | Games | Avg | Max | Top Players |
-|---------|-------|-----------|-----------|-------------|
-| TZ      | 45    | 52M       | 180M      | Dave (58M), Eve (45M) |
-| MM      | 38    | 28M       | 95M       | Frank (32M), Dave (25M) |
-| AFM     | 22    | 15M       | 40M       | Eve (18M), Gina (14M) |
+| Machine | Games | P50 | P90 | Top Players |
+|---------|-------|-----|-----|-------------|
+| TZ      | 45    | 35M (+30%) | 68M | Dave (42M), Eve (38M) |
+| MM      | 38    | 18M (+40%) | 35M | Frank (22M), Dave (20M) |
+| AFM     | 22    | 10M (-12%) | 22M | Eve (12M), Gina (11M) |
+
+The `(+30%)` on P50 shows how the team's P50 compares to the league-wide
+P50 for that machine. This makes strength comparable across machines with
+very different scoring scales.
 
 **Analysis**:
-- **Strongest machines**: Highest avg scores, most experience
-- **Weakest machines**: Lowest avg scores
-- **Most experienced**: Highest game counts
+- **Strongest machines**: High relative strength (large positive %)
+- **Weakest machines**: Low relative strength (negative %) or no data
+- Games and scores only count plays by players currently on the team's roster
 
 Useful for general opponent scouting before checking venue specifics.
 
@@ -166,18 +178,19 @@ Useful for general opponent scouting before checking venue specifics.
 mnp scout PYC --venue ANC
 ```
 
-Shows team's performance on machines at that specific venue:
+Shows current roster's performance on machines at that specific venue.
+Sorted by play count (games by current roster players only).
 
-| Machine | Games | Avg | Max | Top Players |
-|---------|-------|-----------|-----------|-------------|
-| TZ      | 12    | 45M       | 120M      | Alice (48M), Bob (35M) |
-| MM      | 8     | 22M       | 55M       | Carol (25M), Alice (20M) |
-| AFM     | 0     | -         | -         | (no data - see global) |
+| Machine | Games | P50 | P90 | Top Players |
+|---------|-------|-----|-----|-------------|
+| TZ      | 12    | 30M (+13%) | 55M | Alice (35M), Bob (32M) |
+| MM      | 8     | 15M (+10%) | 30M | Carol (18M), Alice (16M) |
+| AFM     | 0     | -          | -   | (no data - see global) |
 
 **Analysis**:
-- **Likely picks**: High avg score + sufficient experience at venue
-- **Likely avoids**: Low avg score or no venue experience
-- **Wildcards**: High variance (large max/avg spread)
+- **Likely picks**: High play count + sufficient experience at venue
+- **Likely avoids**: Low play count or no venue experience
+- **Wildcards**: High variance (large P90/P50 spread)
 
 For machines with no venue-specific data, show global stats as fallback with
 indicator that it's not venue-specific.
@@ -200,19 +213,24 @@ Venue is required - it determines what machines are in play.
 mnp matchup ANC CRA PYC
 ```
 
-**Output**: Side-by-side comparison per machine at venue:
+**Output**: Side-by-side comparison per machine at venue, sorted by edge
+(CRA's relative strength minus PYC's relative strength):
 
-| Machine | CRA Avg | CRA Max | PYC Avg | PYC Max | Edge |
-|---------|---------|---------|---------|---------|------|
-| TZ      | 45M     | 120M    | 38M     | 95M     | CRA +7M |
-| MM      | 22M     | 55M     | 35M     | 80M     | PYC +13M |
-| AFM     | 30M     | 60M     | 28M     | 50M     | Even |
+| Machine | CRA P50 | CRA vs Avg | PYC P50 | PYC vs Avg | Edge |
+|---------|---------|------------|---------|------------|------|
+| TZ      | 35M     | +30%       | 28M     | +10%       | CRA +20% |
+| AFM     | 22M     | +15%       | 20M     | +8%        | CRA +7% |
+| MM      | 18M     | +10%       | 25M     | +40%       | PYC +30% |
+
+Edge is the difference in relative strength (% above league average P50).
+This is comparable across machines because it's normalized — a +20% edge
+on TZ means the same thing as a +20% edge on MM, even though raw scores
+differ by orders of magnitude.
 
 **Analysis**:
-- **CRA advantages**: Machines where CRA avg >> PYC avg
-- **PYC advantages**: Machines where PYC avg >> CRA avg
-- **Contested**: Both teams strong, expect close games
-- **Key singles matchups**: Historical head-to-head between likely players
+- **CRA advantages**: Machines where CRA relative strength >> PYC
+- **PYC advantages**: Machines where PYC relative strength >> CRA
+- **Contested**: Both teams similarly above (or below) average
 
 ---
 
@@ -230,11 +248,14 @@ mnp recommend <team> <machine> [--venue <venue>] [--vs <opponent>]
 mnp recommend CRA TZ
 ```
 
-| Player | Games | Avg | Max |
+| Player | Games | P50 | P90 |
 |--------|-------|-----|-----|
-| Alice  | 15    | 48M | 120M |
-| Bob    | 8     | 35M | 80M |
-| Carol  | 4     | 28M | 45M |
+| Alice  | 15    | 32M (+37%) | 65M |
+| Bob    | 8     | 22M (avg)  | 42M |
+| Carol  | 4     | 18M (-20%) | 30M |
+
+Sorted by P50 score descending. The `(+37%)` shows how each player's P50
+compares to the league-wide P50 for this machine.
 
 **Output** (with `--venue ANC`):
 
@@ -244,18 +265,18 @@ mnp recommend CRA TZ --venue ANC
 
 At ANC:
 
-| Player | Games | Avg | Max |
+| Player | Games | P50 | P90 |
 |--------|-------|-----|-----|
-| Alice  | 3     | 52M | 95M |
-| Bob    | 1     | 40M | 40M |
+| Alice  | 3     | 35M (+49%) | 70M |
+| Bob    | 1     | 40M (+14%) | 40M |
 
 Global (for context):
 
-| Player | Games | Avg | Max |
+| Player | Games | P50 | P90 |
 |--------|-------|-----|-----|
-| Alice  | 15    | 48M | 120M |
-| Bob    | 8     | 35M | 80M |
-| Carol* | 4     | 28M | 45M |
+| Alice  | 15    | 32M (+37%) | 65M |
+| Bob    | 8     | 22M (avg)  | 42M |
+| Carol* | 4     | 18M (-20%) | 30M |
 
 *No ANC data
 
@@ -267,53 +288,117 @@ mnp recommend CRA TZ --vs PYC
 
 CRA options:
 
-| Player | Games | Avg | Max |
+| Player | Games | P50 | P90 |
 |--------|-------|-----|-----|
-| Alice  | 15    | 48M | 120M |
-| Bob    | 8     | 35M | 80M |
+| Alice  | 15    | 32M (+37%) | 65M |
+| Bob    | 8     | 22M (avg)  | 42M |
 
 PYC likely players:
 
-| Player | Games | Avg | Max |
+| Player | Games | P50 | P90 |
 |--------|-------|-----|-----|
-| Dave   | 12    | 42M | 95M |
-| Eve    | 6     | 38M | 70M |
+| Dave   | 12    | 28M (+20%) | 55M |
+| Eve    | 6     | 25M (+9%)  | 48M |
 
-Assessment: Alice outscores PYC's best (Dave) by ~6M avg. Strong pick.
+Assessment: Alice outscores PYC's best (Dave) by ~4M P50. Strong pick.
+
+---
+
+### `mnp venues`
+
+List all venues with their keys.
+
+```
+mnp venues
+```
+
+| Key | Name |
+|-----|------|
+| ANC | Add-a-Ball |
+| SAM | Sam's Tavern |
+| FUL | Full Tilt Ballard |
+| ... | ... |
+
+---
+
+### `mnp machines`
+
+List all machines with their keys.
+
+```
+mnp machines
+```
+
+| Key | Name | Year | Manufacturer |
+|-----|------|------|--------------|
+| TZ | Twilight Zone | 1993 | Bally |
+| MM | Medieval Madness | 1997 | Williams |
+| AFM | Attack from Mars | 1995 | Bally |
+| ... | ... | ... | ... |
+
+Useful for looking up short codes when using other commands.
 
 ## Metrics
 
-**Primary metric**: Average score per machine (not win rate)
+**Primary metric**: P50 (median) score per machine
 
-- More predictive of future performance
-- Independent of historical opponent strength
-- Directly comparable across players/teams
+- **P50**: What this player will probably score — the most likely outcome
+- More predictive than win rate, which is polluted by opponent strength
+- Directly comparable across players on the **same machine**
+- Decorated with `(+30%)` showing % above/below league-wide P50 for that
+  machine, enabling cross-machine comparison
 
-**Secondary metrics**:
-- Max score (indicates ceiling/potential)
+**Relative strength**: % above/below league-wide P50 for that machine
+
+- Solves the cross-machine comparison problem: raw scores vary wildly by
+  machine (2B on AFM is average; 500M on GOT is elite), so raw P50 can't
+  be compared or sorted across machines
+- `(+30%)` means the player/team's P50 is 30% above league-wide P50
+- League average is computed across all current roster players league-wide
+- Used for: sorting `scout` display, `matchup` edge calculation, `plan`
+  pick ordering, and decorating P50 in all commands
+
+**Secondary metric**: P90 (90th percentile) score per machine
+
+- What they score on a great day — their realistic ceiling
+- More robust than max score, which can be a single lucky fluke
+- At small sample sizes (< 10 games) P90 approaches max, which is
+  acceptable — with few games there isn't enough data to distinguish
+  ceiling from fluke anyway
+
+**How each command uses these metrics**:
+
+| Command | Sorted by | Rationale |
+|---------|-----------|-----------|
+| `recommend` | P50 score (descending) | Same machine — raw scores are directly comparable |
+| `scout` | Play count (descending) | Shows what the team actually plays; relative strength decoration shows quality |
+| `matchup` | Edge (your relative strength minus theirs) | Surfaces where you have the biggest advantage |
+| `plan` picking rounds | Edge (your relative strength minus theirs) | Pick machines where your advantage is largest |
+| `plan` opponent predictions | Opponent's relative strength (descending) | Predicts what they'll pick — their strongest machines first |
+
+**Other displayed metrics**:
 - Game count (sample size / confidence)
-- Score variance (consistency indicator)
 
 ## Data Requirements
 
 All data exists in current schema. Key queries:
 
 ```sql
--- Player avg/max score on machine
+-- Player P50/P90 score on machine (requires sorting + offset)
 SELECT 
     p.name,
-    COUNT(*) as games,
-    AVG(gr.score) as avg_score,
-    MAX(gr.score) as max_score
+    COUNT(*) as games
 FROM game_results gr
 JOIN players p ON p.id = gr.player_id
 JOIN games g ON g.id = gr.game_id
 WHERE g.machine_key = ?
   AND gr.team_id IN (SELECT id FROM teams WHERE key = ?)
 GROUP BY p.id
-ORDER BY avg_score DESC;
+ORDER BY games DESC;
 
+-- P50 and P90 calculated per-player via window functions (ROW_NUMBER + offset)
 -- Venue-specific: add JOIN matches + WHERE venue_id = ?
+-- League average: same query without team filter
 ```
 
 ## Out of Scope (Future)
@@ -329,12 +414,8 @@ ORDER BY avg_score DESC;
 1. **Sample size thresholds**: How many games before data is "reliable"?
    Suggest: Show all data but flag low sample sizes (< 3 games).
 
-2. **Score normalization**: Scores vary wildly by machine. Is raw average
-   meaningful for cross-machine comparison? Probably fine for same-machine
-   player comparison (primary use case).
-
-3. **Season scoping**: Should stats be all-time or current season?
+2. **Season scoping**: Should stats be all-time or current season?
    Suggest: Default to all-time, flag for `--season N` to filter.
 
-4. **Team key vs name**: Commands use team key (CRA) for brevity. Should also
+3. **Team key vs name**: Commands use team key (CRA) for brevity. Should also
    support full names? Probably yes, with fuzzy matching.
