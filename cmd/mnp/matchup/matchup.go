@@ -41,6 +41,11 @@ func (c *Command) Run(d *cache.DB) error {
 		return nil
 	}
 
+	names, err := store.GetMachineNames(ctx)
+	if err != nil {
+		return err
+	}
+
 	stats1, err := store.GetTeamMachineStats(ctx, c.Team1, "")
 	if err != nil {
 		return err
@@ -69,7 +74,7 @@ func (c *Command) Run(d *cache.DB) error {
 		e := edgePct(l1, l2)
 		conf := confidence(s1.LikelyPlayers, s2.LikelyPlayers)
 		rows = append(rows, machineRow{
-			machine:  s1.MachineKey,
+			machine:  machineName(names, s1.MachineKey),
 			p50t1:    output.FormatScore(s1.P50Score),
 			likelyt1: formatLikely(l1),
 			p50t2:    output.FormatScore(s2.P50Score),
@@ -89,7 +94,7 @@ func (c *Command) Run(d *cache.DB) error {
 
 		e := edgePct(0, l2)
 		rows = append(rows, machineRow{
-			machine:  key,
+			machine:  machineName(names, key),
 			p50t1:    "-",
 			likelyt1: "-",
 			p50t2:    output.FormatScore(s2.P50Score),
@@ -130,6 +135,13 @@ func likelyScore(players []db.LikelyPlayer) float64 {
 		sum += p.P50Score
 	}
 	return sum / float64(len(players))
+}
+
+func machineName(names map[string]string, key string) string {
+	if n, ok := names[key]; ok {
+		return n
+	}
+	return key
 }
 
 func formatLikely(score float64) string {

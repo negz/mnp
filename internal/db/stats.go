@@ -280,6 +280,30 @@ func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, err
 	return result, nil
 }
 
+// GetMachineNames returns a map of machine key to machine name for all machines.
+func (s *SQLiteStore) GetMachineNames(ctx context.Context) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT key, name FROM machines")
+	if err != nil {
+		return nil, fmt.Errorf("query machine names: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var key, name string
+		if err := rows.Scan(&key, &name); err != nil {
+			return nil, fmt.Errorf("scan machine name: %w", err)
+		}
+		result[key] = name
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate machine names: %w", err)
+	}
+
+	return result, nil
+}
+
 // GetPlayerMachineStats returns stats for players on a team's current roster.
 // Stats are aggregated across all seasons, but only for players currently on
 // the team (latest season with that team key).

@@ -84,14 +84,14 @@ venue). Sorted by play count (games by current roster players only).
 | Machine | Games | P50 (vs Avg) | P90 | Likely Players |
 |---------|-------|--------------|-----|----------------|
 | Godzilla | 135 | 192.9M (+178%) | 1.1B | Jay O (131.9M), Connor V (562.6M) |
-| 8Ball | 91 | 280.2K (+106%) | 536.9K | Joshua F (378.3K), Connor V (244.8K) |
-| GOT | 90 | 672.5M (+169%) | 2.1B | Joshua F (1.4B), Nate T (149.6M) |
+| Eight Ball | 91 | 280.2K (+106%) | 536.9K | Joshua F (378.3K), Connor V (244.8K) |
+| Game of Thrones | 90 | 672.5M (+169%) | 2.1B | Joshua F (1.4B), Nate T (149.6M) |
 
 Footer shows three strongest and three weakest machines by relative strength:
 
 ```
-Strongest: TS, Xenon, Venom Left
-Weakest:   SB, METREM, TNA
+Strongest: Toy Story, Xenon, Venom Left
+Weakest:   Sinbad, Metallica Remastered, Total Nuclear Annihilation
 ```
 
 The `(+178%)` in the P50 column shows how the team's P50 compares to the
@@ -123,9 +123,9 @@ At AAB:
 
 | Machine | Games | P50 (vs Avg) | P90 | Likely Players |
 |---------|-------|--------------|-----|----------------|
-| EBD | 19 | 953.4K (+45%) | 1.9M | Ken D (898.5K), Chris T (1.1M) |
-| Nitro | 13 | 410.8K (+146%) | 650.5K | Joshua F (410.8K), Armand G (108.7K) |
-| TAF | 11 | 61.7M (+61%) | 183.4M | Connor V (61.7M), Joshua F (44.2M) |
+| Eight Ball Deluxe | 19 | 953.4K (+45%) | 1.9M | Ken D (898.5K), Chris T (1.1M) |
+| Nitro Groundshaker | 13 | 410.8K (+146%) | 650.5K | Joshua F (410.8K), Armand G (108.7K) |
+| The Addams Family | 11 | 61.7M (+61%) | 183.4M | Connor V (61.7M), Joshua F (44.2M) |
 
 ```
 Global (for context):
@@ -134,16 +134,16 @@ Global (for context):
 | Machine | Games | P50 (vs Avg) | P90 | Likely Players |
 |---------|-------|--------------|-----|----------------|
 | Godzilla | 135 | 192.9M (+178%) | 1.1B | Jay O (131.9M), Connor V (562.6M) |
-| MB | 80 | 19.9M (+19%) | 69.8M | Jay O (19.9M), MJ M (17.6M) |
-| JW* | 20 | 75.0M (+266%) | 145.0M | Armand G (86.6M), Connor V (120.2M) |
+| Monster Bash | 80 | 19.9M (+19%) | 69.8M | Jay O (19.9M), MJ M (17.6M) |
+| John Wick* | 20 | 75.0M (+266%) | 145.0M | Armand G (86.6M), Connor V (120.2M) |
 
 Machines with no venue data are marked with `*` in the global table.
 
 The footer shows strongest/weakest by relative strength at the venue:
 
 ```
-Strongest: BKSoR, BM66, Fathom
-Weakest:   FOO, MH, MM
+Strongest: Black Knight Sword of Rage, Batman 66, Fathom
+Weakest:   Foo Fighters, Mata Hari, Medieval Madness
 ```
 
 **Analysis**:
@@ -175,15 +175,15 @@ mnp matchup AAB CRA PYC
 | Machine | CRA P50 | CRA Likely | PYC P50 | PYC Likely | Edge |
 |---------|---------|------------|---------|------------|------|
 | Fathom | 446.0K | 2.3M | 258.4K | 258.4K | CRA 781% ▲ |
-| JW | 75.0M | 103.4M | 9.2M | 15.7M | CRA 559% △ |
+| John Wick | 75.0M | 103.4M | 9.2M | 15.7M | CRA 559% △ |
 | Godzilla | 192.9M | 347.3M | 62.2M | 61.2M | CRA 467% ▲ |
-| TAF | 69.1M | 69.0M | 37.7M | 91.4M | PYC 32% △ |
-| FOO | 76.2M | 52.0M | 126.5M | 114.0M | PYC 119% ▼ |
+| The Addams Family | 69.1M | 69.0M | 37.7M | 91.4M | PYC 32% △ |
+| Foo Fighters | 76.2M | 52.0M | 126.5M | 114.0M | PYC 119% ▼ |
 
 ```
 ▲ high confidence  △ medium  ▼ low (based on likely players' games)
-CRA advantages: Fathom, JW, Godzilla, UXMEN, ...
-PYC advantages: TAF, FOO
+CRA advantages: Fathom, John Wick, Godzilla, Uncanny X-men, ...
+PYC advantages: The Addams Family, Foo Fighters
 ```
 
 - **P50**: Team-wide median (whole roster's performance on this machine)
