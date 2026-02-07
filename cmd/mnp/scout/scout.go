@@ -66,6 +66,11 @@ func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, leagueP50
 
 // runWithVenue shows venue-specific stats with global fallback.
 func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagueP50 map[string]float64) error {
+	venueMachines, err := store.GetVenueMachines(ctx, c.Venue)
+	if err != nil {
+		return err
+	}
+
 	venueStats, err := store.GetTeamMachineStats(ctx, c.Team, c.Venue)
 	if err != nil {
 		return err
@@ -92,24 +97,24 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 		fmt.Println()
 	}
 
-	venueMachineSet := make(map[string]bool)
+	venueDataSet := make(map[string]bool)
 	for _, s := range venueStats {
-		venueMachineSet[s.MachineKey] = true
+		venueDataSet[s.MachineKey] = true
 	}
 
-	globalByKey := make(map[string]db.TeamMachineStats)
-	for _, s := range globalStats {
-		globalByKey[s.MachineKey] = s
-	}
-
-	rows := make([][]string, 0, len(venueStats))
-	for _, vs := range venueStats {
-		gs, ok := globalByKey[vs.MachineKey]
-		if !ok {
+	rows := make([][]string, 0, len(venueMachines))
+	hasGlobalOnly := false
+	for _, gs := range globalStats {
+		if !venueMachines[gs.MachineKey] {
 			continue
 		}
+		key := gs.MachineKey
+		if !venueDataSet[key] {
+			key += "*"
+			hasGlobalOnly = true
+		}
 		rows = append(rows, []string{
-			gs.MachineKey,
+			key,
 			fmt.Sprintf("%d", gs.Games),
 			output.FormatP50(gs.P50Score, leagueP50[gs.MachineKey]),
 			output.FormatScore(gs.P90Score),
@@ -125,6 +130,9 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 			rows,
 		); err != nil {
 			return err
+		}
+		if hasGlobalOnly {
+			fmt.Printf("*No %s data\n", c.Venue)
 		}
 	}
 

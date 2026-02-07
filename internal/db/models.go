@@ -142,6 +142,35 @@ func (s *SQLiteStore) UpsertVenueMachine(ctx context.Context, venueID int64, mac
 	return nil
 }
 
+// GetVenueMachines returns the machine keys at a venue.
+func (s *SQLiteStore) GetVenueMachines(ctx context.Context, venueKey string) (map[string]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT vm.machine_key
+		FROM venue_machines vm
+		JOIN venues v ON v.id = vm.venue_id
+		WHERE v.key = ?
+	`, venueKey)
+	if err != nil {
+		return nil, fmt.Errorf("query venue machines: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	result := make(map[string]bool)
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("scan venue machine: %w", err)
+		}
+		result[key] = true
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate venue machines: %w", err)
+	}
+
+	return result, nil
+}
+
 // UpsertRoster adds a player to a team roster.
 func (s *SQLiteStore) UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error {
 	if _, err := s.db.ExecContext(ctx, `
