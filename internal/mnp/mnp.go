@@ -387,21 +387,10 @@ func (c *Client) loadSeasonJSON(ctx context.Context, seasonPath string, seasonID
 	}
 
 	for _, t := range season.Teams {
-		// Get venue ID
-		var venueID int64
-		if t.Venue != "" {
-			var err error
-			venueID, err = c.store.UpsertVenue(ctx, t.Venue, t.Venue)
-			if err != nil {
-				return fmt.Errorf("upsert venue %s: %w", t.Venue, err)
-			}
-		}
-
 		teamID, err := c.store.UpsertTeam(ctx, db.Team{
-			Key:         t.Key,
-			Name:        t.Name,
-			SeasonID:    seasonID,
-			HomeVenueID: venueID,
+			Key:      t.Key,
+			Name:     t.Name,
+			SeasonID: seasonID,
 		})
 		if err != nil {
 			return err
@@ -477,7 +466,6 @@ type gameJSON struct {
 type playerResult struct {
 	hash   string
 	score  int64
-	points float64
 	pos    int
 	teamID int64
 }
@@ -487,13 +475,13 @@ type playerResult struct {
 // In singles (rounds 2,3): player 1 is picking team, player 2 is matching team.
 func buildPlayerResults(g gameJSON, homeTeamID, awayTeamID int64, isDoubles bool) []playerResult {
 	results := []playerResult{
-		{g.Player1, g.Score1, g.Points1, 1, awayTeamID},
-		{g.Player2, g.Score2, g.Points2, 2, homeTeamID},
+		{hash: g.Player1, score: g.Score1, pos: 1, teamID: awayTeamID},
+		{hash: g.Player2, score: g.Score2, pos: 2, teamID: homeTeamID},
 	}
 	if isDoubles {
 		results = append(results,
-			playerResult{g.Player3, g.Score3, g.Points3, 3, awayTeamID},
-			playerResult{g.Player4, g.Score4, g.Points4, 4, homeTeamID},
+			playerResult{hash: g.Player3, score: g.Score3, pos: 3, teamID: awayTeamID},
+			playerResult{hash: g.Player4, score: g.Score4, pos: 4, teamID: homeTeamID},
 		)
 	}
 	return results
@@ -549,8 +537,6 @@ func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64
 		HomeTeamID: homeTeamID,
 		AwayTeamID: awayTeamID,
 		VenueID:    venueID,
-		HomePoints: m.Home.Points,
-		AwayPoints: m.Away.Points,
 	})
 	if err != nil {
 		return err
@@ -567,10 +553,6 @@ func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64
 func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []roundJSON, homeTeamID, awayTeamID int64, playerNames map[string]string) error {
 	for _, r := range rounds {
 		isDoubles := r.N == 1 || r.N == 4
-		pointsPossible := 3 // singles
-		if isDoubles {
-			pointsPossible = 5
-		}
 
 		for _, g := range r.Games {
 			if !g.Done {
@@ -587,7 +569,7 @@ func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []rou
 				return err
 			}
 
-			if err := c.insertGameResults(ctx, gameID, g, homeTeamID, awayTeamID, playerNames, pointsPossible, isDoubles); err != nil {
+			if err := c.insertGameResults(ctx, gameID, g, homeTeamID, awayTeamID, playerNames, isDoubles); err != nil {
 				return err
 			}
 		}
@@ -595,7 +577,7 @@ func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []rou
 	return nil
 }
 
-func (c *Client) insertGameResults(ctx context.Context, gameID int64, g gameJSON, homeTeamID, awayTeamID int64, playerNames map[string]string, pointsPossible int, isDoubles bool) error {
+func (c *Client) insertGameResults(ctx context.Context, gameID int64, g gameJSON, homeTeamID, awayTeamID int64, playerNames map[string]string, isDoubles bool) error {
 	for _, p := range buildPlayerResults(g, homeTeamID, awayTeamID, isDoubles) {
 		if p.hash == "" {
 			continue
@@ -612,13 +594,11 @@ func (c *Client) insertGameResults(ctx context.Context, gameID int64, g gameJSON
 		}
 
 		if err := c.store.InsertGameResult(ctx, db.GameResult{
-			GameID:         gameID,
-			PlayerID:       playerID,
-			TeamID:         p.teamID,
-			Position:       p.pos,
-			Score:          p.score,
-			PointsWon:      int(p.points * 2), // Store as half-points to avoid float
-			PointsPossible: pointsPossible * 2,
+			GameID:   gameID,
+			PlayerID: playerID,
+			TeamID:   p.teamID,
+			Position: p.pos,
+			Score:    p.score,
 		}); err != nil {
 			return err
 		}

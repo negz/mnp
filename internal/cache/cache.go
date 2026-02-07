@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 
 	"github.com/negz/mnp/internal/db"
-	"github.com/negz/mnp/internal/ipdb"
 	"github.com/negz/mnp/internal/mnp"
 )
 
@@ -29,9 +28,8 @@ func Dir() string {
 // DB provides access to a synced MNP database.
 // It lazily opens and syncs the database on first use.
 type DB struct {
-	IPDBURL    string `default:"https://raw.githubusercontent.com/xantari/Ipdb.Database/refs/heads/master/Ipdb.Database/Database/ipdbdatabase.json" help:"IPDB database JSON URL."   hidden:"" name:"ipdb-url"`
-	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git"                                                                help:"MNP archive git repo URL." hidden:""`
-	ForceSync  bool   `help:"Sync data before running command."                                                                                     name:"sync"                      short:"s"`
+	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL." hidden:""`
+	ForceSync  bool   `help:"Sync data before running command."                      name:"sync"                      short:"s"`
 
 	log   *slog.Logger
 	store *db.SQLiteStore
@@ -84,17 +82,10 @@ func (d *DB) Close() error {
 	return d.store.Close()
 }
 
-// Sync synchronizes data from upstream sources (IPDB, MNP archive).
+// Sync synchronizes data from the MNP data archive.
 // It respects staleness unless ForceSync is set.
 func (d *DB) Sync(ctx context.Context) error {
-	cacheDir := Dir()
-	archivePath := filepath.Join(cacheDir, "mnp-data-archive")
-
-	ipdbClient := ipdb.NewClient(filepath.Join(cacheDir, "ipdb"),
-		ipdb.WithURL(d.IPDBURL),
-		ipdb.WithLogger(d.log),
-		ipdb.WithStore(d.store),
-	)
+	archivePath := filepath.Join(Dir(), "mnp-data-archive")
 
 	mnpClient := mnp.NewClient(archivePath,
 		mnp.WithRepoURL(d.ArchiveURL),
@@ -102,13 +93,5 @@ func (d *DB) Sync(ctx context.Context) error {
 		mnp.WithStore(d.store),
 	)
 
-	if err := ipdbClient.SyncIfStale(ctx, d.ForceSync); err != nil {
-		return err
-	}
-
-	if err := mnpClient.SyncIfStale(ctx, d.ForceSync); err != nil {
-		return err
-	}
-
-	return nil
+	return mnpClient.SyncIfStale(ctx, d.ForceSync)
 }

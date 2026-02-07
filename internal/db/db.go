@@ -112,16 +112,12 @@ func (s *SQLiteStore) MaxSeasonNumber(ctx context.Context) (int, error) {
 }
 
 const schema = `
--- Pinball machines (from MNP + IPDB metadata)
+-- Pinball machines
 --
--- Example: key='TAF', name='The Addams Family', manufacturer='Williams', year=1992
+-- Example: key='TAF', name='The Addams Family'
 CREATE TABLE IF NOT EXISTS machines (
     key TEXT PRIMARY KEY,           -- MNP's short code (e.g., 'TAF', 'MM', 'TZ')
-    name TEXT NOT NULL,             -- Full name (e.g., 'The Addams Family')
-    manufacturer TEXT,              -- 'Williams', 'Bally', 'Stern', etc.
-    year INTEGER,                   -- Year released
-    type TEXT,                      -- 'SS' (solid state) or 'EM' (electromechanical)
-    ipdb_id INTEGER                 -- Internet Pinball Database ID
+    name TEXT NOT NULL              -- Full name (e.g., 'The Addams Family')
 );
 
 -- League seasons
@@ -144,7 +140,6 @@ CREATE TABLE IF NOT EXISTS teams (
     key TEXT NOT NULL,              -- Short code (e.g., 'CRA', 'PYC')
     name TEXT NOT NULL,             -- Full name (e.g., 'Castle Crashers')
     season_id INTEGER NOT NULL REFERENCES seasons(id),
-    home_venue_id INTEGER REFERENCES venues(id),
     UNIQUE(key, season_id)
 );
 
@@ -183,9 +178,7 @@ CREATE TABLE IF NOT EXISTS matches (
     date TEXT,                      -- ISO date (e.g., '2024-01-15')
     home_team_id INTEGER NOT NULL REFERENCES teams(id),
     away_team_id INTEGER NOT NULL REFERENCES teams(id),
-    venue_id INTEGER REFERENCES venues(id),
-    home_points INTEGER,            -- Total points (max 82), NULL if not played
-    away_points INTEGER             -- Total points (max 82), NULL if not played
+    venue_id INTEGER REFERENCES venues(id)
 );
 
 -- Individual games within a match
@@ -200,18 +193,12 @@ CREATE TABLE IF NOT EXISTS games (
 );
 
 -- Player results for each game
---
--- Points are stored as 2x actual values to handle half-points as integers.
--- Doubles: 5 points possible (stored as 10)
--- Singles: 3 points possible (stored as 6)
 CREATE TABLE IF NOT EXISTS game_results (
     game_id INTEGER NOT NULL REFERENCES games(id),
     player_id INTEGER NOT NULL REFERENCES players(id),
     team_id INTEGER NOT NULL REFERENCES teams(id),
     position INTEGER NOT NULL,      -- Player order (1-4 for doubles, 1-2 for singles)
     score INTEGER,                  -- Pinball score achieved
-    points_won INTEGER NOT NULL,    -- League points * 2 (e.g., 3 points = 6)
-    points_possible INTEGER NOT NULL, -- Max points * 2 (10 for doubles, 6 for singles)
     PRIMARY KEY (game_id, player_id)
 );
 
@@ -224,7 +211,7 @@ CREATE INDEX IF NOT EXISTS idx_teams_season ON teams(season_id);
 
 -- Sync metadata for tracking cache freshness
 CREATE TABLE IF NOT EXISTS sync_metadata (
-    key TEXT PRIMARY KEY,            -- e.g., 'ipdb_last_sync'
+    key TEXT PRIMARY KEY,            -- e.g., 'mnp_last_sync'
     value TEXT NOT NULL              -- ISO timestamp or other value
 );
 `

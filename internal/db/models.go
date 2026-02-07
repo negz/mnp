@@ -8,26 +8,18 @@ import (
 
 // Machine represents a pinball machine.
 type Machine struct {
-	Key          string
-	Name         string
-	Manufacturer string
-	Year         int
-	Type         string
-	IPDBID       int
+	Key  string
+	Name string
 }
 
 // UpsertMachine inserts or updates a machine.
 func (s *SQLiteStore) UpsertMachine(ctx context.Context, m Machine) error {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO machines (key, name, manufacturer, year, type, ipdb_id)
-		VALUES (?, ?, ?, ?, ?, ?)
+		INSERT INTO machines (key, name)
+		VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET
-			name = excluded.name,
-			manufacturer = excluded.manufacturer,
-			year = excluded.year,
-			type = excluded.type,
-			ipdb_id = excluded.ipdb_id
-	`, m.Key, m.Name, m.Manufacturer, m.Year, m.Type, m.IPDBID); err != nil {
+			name = excluded.name
+	`, m.Key, m.Name); err != nil {
 		return fmt.Errorf("upsert machine %s: %w", m.Key, err)
 	}
 	return nil
@@ -102,22 +94,20 @@ func (s *SQLiteStore) UpsertVenue(ctx context.Context, key, name string) (int64,
 
 // Team represents a league team.
 type Team struct {
-	ID          int64
-	Key         string
-	Name        string
-	SeasonID    int64
-	HomeVenueID int64
+	ID       int64
+	Key      string
+	Name     string
+	SeasonID int64
 }
 
 // UpsertTeam inserts or updates a team and returns its ID.
 func (s *SQLiteStore) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO teams (key, name, season_id, home_venue_id)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO teams (key, name, season_id)
+		VALUES (?, ?, ?)
 		ON CONFLICT(key, season_id) DO UPDATE SET
-			name = excluded.name,
-			home_venue_id = excluded.home_venue_id
-	`, t.Key, t.Name, t.SeasonID, t.HomeVenueID); err != nil {
+			name = excluded.name
+	`, t.Key, t.Name, t.SeasonID); err != nil {
 		return 0, fmt.Errorf("upsert team %s: %w", t.Key, err)
 	}
 
@@ -193,24 +183,20 @@ type Match struct {
 	HomeTeamID int64
 	AwayTeamID int64
 	VenueID    int64
-	HomePoints int
-	AwayPoints int
 }
 
 // UpsertMatch inserts or updates a match and returns its ID.
 func (s *SQLiteStore) UpsertMatch(ctx context.Context, m Match) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO matches (key, season_id, week, date, home_team_id, away_team_id, venue_id, home_points, away_points)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO matches (key, season_id, week, date, home_team_id, away_team_id, venue_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(key) DO UPDATE SET
 			week = excluded.week,
 			date = excluded.date,
 			home_team_id = excluded.home_team_id,
 			away_team_id = excluded.away_team_id,
-			venue_id = excluded.venue_id,
-			home_points = excluded.home_points,
-			away_points = excluded.away_points
-	`, m.Key, m.SeasonID, m.Week, m.Date, m.HomeTeamID, m.AwayTeamID, m.VenueID, m.HomePoints, m.AwayPoints); err != nil {
+			venue_id = excluded.venue_id
+	`, m.Key, m.SeasonID, m.Week, m.Date, m.HomeTeamID, m.AwayTeamID, m.VenueID); err != nil {
 		return 0, fmt.Errorf("upsert match %s: %w", m.Key, err)
 	}
 
@@ -249,27 +235,23 @@ func (s *SQLiteStore) InsertGame(ctx context.Context, g Game) (int64, error) {
 
 // GameResult represents a player's result in a game.
 type GameResult struct {
-	GameID         int64
-	PlayerID       int64
-	TeamID         int64
-	Position       int
-	Score          int64
-	PointsWon      int
-	PointsPossible int
+	GameID   int64
+	PlayerID int64
+	TeamID   int64
+	Position int
+	Score    int64
 }
 
 // InsertGameResult inserts a game result.
 func (s *SQLiteStore) InsertGameResult(ctx context.Context, r GameResult) error {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO game_results (game_id, player_id, team_id, position, score, points_won, points_possible)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO game_results (game_id, player_id, team_id, position, score)
+		VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(game_id, player_id) DO UPDATE SET
 			team_id = excluded.team_id,
 			position = excluded.position,
-			score = excluded.score,
-			points_won = excluded.points_won,
-			points_possible = excluded.points_possible
-	`, r.GameID, r.PlayerID, r.TeamID, r.Position, r.Score, r.PointsWon, r.PointsPossible); err != nil {
+			score = excluded.score
+	`, r.GameID, r.PlayerID, r.TeamID, r.Position, r.Score); err != nil {
 		return fmt.Errorf("insert game result: %w", err)
 	}
 	return nil
