@@ -56,6 +56,7 @@ plan before match night.
 | `scout` | Team strengths/weaknesses (general or at venue) |
 | `matchup` | Head-to-head team comparison at venue |
 | `recommend` | Drill-down: who should play a specific machine |
+| `player` | Individual player stats across machines |
 | `teams` | List all teams with home venues |
 | `venues` | List all venues with keys |
 | `machines` | List all machines with keys |
@@ -387,6 +388,46 @@ their home venues when using other commands.
 
 ---
 
+### `mnp player`
+
+Show an individual player's stats across all machines they've played.
+
+```
+mnp player <name> [--venue <venue>]
+```
+
+**Output** (basic):
+
+```
+mnp player "Jay Ostby"
+```
+
+| Machine | Games | P50 (vs Avg) | P90 |
+|---------|-------|--------------|-----|
+| Godzilla | 67 | 131.9M (+90%) | 578.0M |
+| Monster Bash | 45 | 19.9M (+19%) | 69.8M |
+| ... | ... | ... | ... |
+
+```
+Team: Castle Crashers (CRA)
+Strongest: Godzilla, Fathom, John Wick
+Weakest:   Foo Fighters, Medieval Madness, Sinbad
+```
+
+Sorted by relative strength (vs avg), descending. Shows current team and
+strongest/weakest machines in the footer.
+
+**Output** (with `--venue AAB`):
+
+Same venue-specific + global layout as `scout` and `recommend`: venue table
+first, then global with `*` marking machines the player hasn't played at
+that venue.
+
+Useful for digging deeper into a player who appears in `recommend` results,
+or for understanding an opponent's profile across machines.
+
+---
+
 ## Metrics
 
 **Primary metric**: P50 (median) score per machine
@@ -537,6 +578,13 @@ Same as CLI `recommend`. Inputs: team, machine, optionally venue and
 opponent — all dropdowns. Typically reached from Matchup or Scout rather
 than directly.
 
+#### Player
+
+Same as CLI `player`. Not in the nav — reached by tapping a player name
+anywhere it appears (Scout's Likely Players, Recommend's player list,
+Matchup's Likely columns). Shows the player's machine stats, team, and
+strongest/weakest machines. Optional venue filter.
+
 #### Lookup
 
 Collapses the `teams`, `venues`, and `machines` CLI commands into one page
@@ -562,6 +610,13 @@ CREATE TABLE IF NOT EXISTS schedule (
 ```
 
 All other pages reuse existing CLI queries against the current schema.
+
+### Display Differences
+
+The CLI abbreviates player names (e.g. "Jay O", "Connor V") to keep
+tables narrow for terminal output. The web UI uses full names (e.g.
+"Jay Ostby", "Connor Vermeys") since it has more horizontal space and
+can wrap on mobile.
 
 ## Future Work
 
