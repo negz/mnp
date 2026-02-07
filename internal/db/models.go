@@ -130,6 +130,18 @@ func (s *SQLiteStore) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 	return id, nil
 }
 
+// UpsertVenueMachine associates a machine with a venue.
+func (s *SQLiteStore) UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO venue_machines (venue_id, machine_key)
+		VALUES (?, ?)
+		ON CONFLICT(venue_id, machine_key) DO NOTHING
+	`, venueID, machineKey); err != nil {
+		return fmt.Errorf("upsert venue machine %s: %w", machineKey, err)
+	}
+	return nil
+}
+
 // UpsertRoster adds a player to a team roster.
 func (s *SQLiteStore) UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error {
 	if _, err := s.db.ExecContext(ctx, `

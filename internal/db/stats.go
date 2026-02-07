@@ -85,7 +85,11 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 
 	if venueKey != "" {
 		query += " AND m.venue_id = (SELECT id FROM venues WHERE key = ?)"
-		args = append(args, venueKey)
+		query += ` AND g.machine_key IN (
+			SELECT vm.machine_key FROM venue_machines vm
+			JOIN venues v ON v.id = vm.venue_id
+			WHERE v.key = ?)`
+		args = append(args, venueKey, venueKey)
 	}
 
 	query += `
@@ -161,7 +165,11 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 
 	if venueKey != "" {
 		query += " AND m.venue_id = (SELECT id FROM venues WHERE key = ?)"
-		args = append(args, venueKey)
+		query += ` AND g.machine_key IN (
+			SELECT vm.machine_key FROM venue_machines vm
+			JOIN venues v ON v.id = vm.venue_id
+			WHERE v.key = ?)`
+		args = append(args, venueKey, venueKey)
 	}
 
 	query += `

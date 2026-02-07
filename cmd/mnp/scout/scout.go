@@ -2,9 +2,11 @@
 package scout
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/negz/mnp/internal/cache"
@@ -90,35 +92,35 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 		venueMachineSet[s.MachineKey] = true
 	}
 
-	rows := make([][]string, 0, len(globalStats))
+	globalByKey := make(map[string]db.TeamMachineStats)
 	for _, s := range globalStats {
-		key := s.MachineKey
-		if !venueMachineSet[key] {
-			key += "*"
+		globalByKey[s.MachineKey] = s
+	}
+
+	rows := make([][]string, 0, len(venueStats))
+	for _, vs := range venueStats {
+		gs, ok := globalByKey[vs.MachineKey]
+		if !ok {
+			continue
 		}
 		rows = append(rows, []string{
-			key,
-			fmt.Sprintf("%d", s.Games),
-			output.FormatScore(s.P50Score),
-			output.FormatScore(s.P75Score),
-			output.FormatScore(float64(s.MaxScore)),
-			formatTopPlayers(s.TopPlayers),
+			gs.MachineKey,
+			fmt.Sprintf("%d", gs.Games),
+			output.FormatScore(gs.P50Score),
+			output.FormatScore(gs.P75Score),
+			output.FormatScore(float64(gs.MaxScore)),
+			formatTopPlayers(gs.TopPlayers),
 		})
 	}
 
-	fmt.Println("Global (for context):")
-	fmt.Println()
-	if err := output.Table(os.Stdout,
-		[]string{"Machine", "Games", "P50", "P75", "Max", "Top Players"},
-		rows,
-	); err != nil {
-		return err
-	}
-
-	for _, s := range globalStats {
-		if !venueMachineSet[s.MachineKey] {
-			fmt.Printf("\n*No %s data\n", c.Venue)
-			break
+	if len(rows) > 0 {
+		fmt.Println("Global (for context):")
+		fmt.Println()
+		if err := output.Table(os.Stdout,
+			[]string{"Machine", "Games", "P50", "P75", "Max", "Top Players"},
+			rows,
+		); err != nil {
+			return err
 		}
 	}
 
@@ -142,33 +144,39 @@ func statsToRows(stats []db.TeamMachineStats) [][]string {
 	return rows
 }
 
-// formatTopPlayers formats top players as "Alice (48M), Bob (35M)".
+// formatTopPlayers formats top players as "Alice, Bob".
 func formatTopPlayers(players []db.TopPlayer) string {
 	parts := make([]string, len(players))
 	for i, p := range players {
-		parts[i] = fmt.Sprintf("%s (%s)", p.Name, output.FormatScore(p.P75Score))
+		parts[i] = p.Name
 	}
 	return strings.Join(parts, ", ")
 }
 
-// printAnalysis prints a summary of strongest and weakest machines.
+// printAnalysis prints a summary of strongest and weakest machines by P75.
 func printAnalysis(stats []db.TeamMachineStats) {
 	if len(stats) == 0 {
 		return
 	}
 
+	sorted := make([]db.TeamMachineStats, len(stats))
+	copy(sorted, stats)
+	slices.SortFunc(sorted, func(a, b db.TeamMachineStats) int {
+		return cmp.Compare(b.P75Score, a.P75Score)
+	})
+
 	fmt.Println()
 
 	strong := make([]string, 0, 3)
-	for i := range min(3, len(stats)) {
-		strong = append(strong, stats[i].MachineKey)
+	for i := range min(3, len(sorted)) {
+		strong = append(strong, sorted[i].MachineKey)
 	}
 	fmt.Printf("Strongest: %s\n", strings.Join(strong, ", "))
 
-	if len(stats) > 3 {
+	if len(sorted) > 3 {
 		weak := make([]string, 0, 3)
-		for i := len(stats) - 1; i >= max(0, len(stats)-3); i-- {
-			weak = append(weak, stats[i].MachineKey)
+		for i := len(sorted) - 1; i >= max(0, len(sorted)-3); i-- {
+			weak = append(weak, sorted[i].MachineKey)
 		}
 		fmt.Printf("Weakest:   %s\n", strings.Join(weak, ", "))
 	}

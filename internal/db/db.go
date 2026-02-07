@@ -157,12 +157,11 @@ CREATE TABLE IF NOT EXISTS venues (
     name TEXT NOT NULL              -- Full name (e.g., 'Add-a-Ball')
 );
 
--- Machines available at each venue per season
+-- Current machines at each venue (replaced on each sync)
 CREATE TABLE IF NOT EXISTS venue_machines (
     venue_id INTEGER NOT NULL REFERENCES venues(id),
     machine_key TEXT NOT NULL REFERENCES machines(key),
-    season_id INTEGER NOT NULL REFERENCES seasons(id),
-    PRIMARY KEY (venue_id, machine_key, season_id)
+    PRIMARY KEY (venue_id, machine_key)
 );
 
 -- Rosters (player-team membership)

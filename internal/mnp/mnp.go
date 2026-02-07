@@ -47,6 +47,9 @@ type Store interface {
 	// UpsertRoster adds a player to a team roster.
 	UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error
 
+	// UpsertVenueMachine associates a machine with a venue.
+	UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error
+
 	// UpsertMatch inserts or updates a match and returns its ID.
 	UpsertMatch(ctx context.Context, m db.Match) (int64, error)
 
@@ -278,16 +281,45 @@ func (c *Client) loadVenues(ctx context.Context) error {
 	defer f.Close() //nolint:errcheck // Read-only file.
 
 	var venues map[string]struct {
-		Key  string `json:"key"`
-		Name string `json:"name"`
+		Key      string   `json:"key"`
+		Name     string   `json:"name"`
+		Machines []string `json:"machines"`
 	}
 	if err := json.NewDecoder(f).Decode(&venues); err != nil {
 		return fmt.Errorf("decode venues.json: %w", err)
 	}
 
+	// Build set of known machines to skip venue machines that don't exist.
+	knownMachines := make(map[string]bool)
+	mrows, err := c.store.DB().QueryContext(ctx, "SELECT key FROM machines")
+	if err != nil {
+		return fmt.Errorf("query machines: %w", err)
+	}
+	defer mrows.Close() //nolint:errcheck // Read-only query.
+	for mrows.Next() {
+		var k string
+		if err := mrows.Scan(&k); err != nil {
+			return fmt.Errorf("scan machine key: %w", err)
+		}
+		knownMachines[k] = true
+	}
+	if err := mrows.Err(); err != nil {
+		return fmt.Errorf("iterate machines: %w", err)
+	}
+
 	for _, v := range venues {
-		if _, err := c.store.UpsertVenue(ctx, v.Key, v.Name); err != nil {
+		venueID, err := c.store.UpsertVenue(ctx, v.Key, v.Name)
+		if err != nil {
 			return err
+		}
+		for _, mk := range v.Machines {
+			if !knownMachines[mk] {
+				c.log.Info("Skipping unknown venue machine", "venue", v.Key, "machine", mk)
+				continue
+			}
+			if err := c.store.UpsertVenueMachine(ctx, venueID, mk); err != nil {
+				return err
+			}
 		}
 	}
 
