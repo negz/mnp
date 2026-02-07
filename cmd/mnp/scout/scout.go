@@ -14,6 +14,8 @@ import (
 	"github.com/negz/mnp/internal/output"
 )
 
+const minGamesForAnalysis = 3
+
 // Command scouts a team's strengths and weaknesses across machines.
 type Command struct {
 	Team  string `arg:""                                 help:"Team key (e.g., CRA)."`
@@ -191,13 +193,21 @@ func printAnalysis(stats []db.TeamMachineStats, leagueP50 map[string]float64, na
 		return
 	}
 
-	sorted := make([]db.TeamMachineStats, len(stats))
-	copy(sorted, stats)
+	sorted := make([]db.TeamMachineStats, 0, len(stats))
+	for _, s := range stats {
+		if s.Games >= minGamesForAnalysis {
+			sorted = append(sorted, s)
+		}
+	}
 	slices.SortFunc(sorted, func(a, b db.TeamMachineStats) int {
 		aRel := output.RelStr(a.P50Score, leagueP50[a.MachineKey])
 		bRel := output.RelStr(b.P50Score, leagueP50[b.MachineKey])
 		return cmp.Compare(bRel, aRel)
 	})
+
+	if len(sorted) == 0 {
+		return
+	}
 
 	fmt.Println()
 

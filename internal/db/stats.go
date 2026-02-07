@@ -280,6 +280,102 @@ func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, err
 	return result, nil
 }
 
+// PlayerMachineStats contains per-machine stats for a single player.
+type PlayerMachineStats struct {
+	MachineKey string
+	Games      int
+	P50Score   float64
+	P90Score   float64
+}
+
+// GetSinglePlayerMachineStats returns per-machine stats for a single player.
+// If venueKey is non-empty, filters to games played at that venue.
+// Results are ordered by play count descending.
+func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]PlayerMachineStats, error) {
+	query := `
+		WITH scores AS (
+			SELECT
+				g.machine_key,
+				gr.score,
+				ROW_NUMBER() OVER (PARTITION BY g.machine_key ORDER BY gr.score) as rn,
+				COUNT(*) OVER (PARTITION BY g.machine_key) as total
+			FROM game_results gr
+			JOIN players p ON p.id = gr.player_id
+			JOIN games g ON g.id = gr.game_id
+			JOIN matches m ON m.id = g.match_id
+			WHERE p.name = ?
+			  AND g.machine_key IS NOT NULL
+	`
+	args := []any{playerName}
+
+	if venueKey != "" {
+		query += " AND m.venue_id = (SELECT id FROM venues WHERE key = ?)"
+		args = append(args, venueKey)
+	}
+
+	query += `
+		),
+		machine_agg AS (
+			SELECT DISTINCT machine_key, total
+			FROM scores
+		)
+		SELECT
+			ma.machine_key,
+			ma.total as games,
+			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
+			 AND s.rn = (ma.total + 1) / 2) as p50,
+			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
+			 AND s.rn = (ma.total * 9 + 9) / 10) as p90
+		FROM machine_agg ma
+		ORDER BY games DESC
+	`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query single player machine stats: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var stats []PlayerMachineStats
+	for rows.Next() {
+		var ps PlayerMachineStats
+		if err := rows.Scan(&ps.MachineKey, &ps.Games, &ps.P50Score, &ps.P90Score); err != nil {
+			return nil, fmt.Errorf("scan single player machine stats: %w", err)
+		}
+		stats = append(stats, ps)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate single player machine stats: %w", err)
+	}
+
+	return stats, nil
+}
+
+// PlayerTeam contains a player's current team information.
+type PlayerTeam struct {
+	TeamKey  string
+	TeamName string
+}
+
+// GetPlayerTeam returns the current team for a player (latest season).
+func (s *SQLiteStore) GetPlayerTeam(ctx context.Context, playerName string) (PlayerTeam, error) {
+	var pt PlayerTeam
+	err := s.db.QueryRowContext(ctx, `
+		SELECT t.key, t.name
+		FROM teams t
+		JOIN rosters r ON r.team_id = t.id
+		JOIN players p ON p.id = r.player_id
+		WHERE p.name = ?
+		ORDER BY t.season_id DESC
+		LIMIT 1
+	`, playerName).Scan(&pt.TeamKey, &pt.TeamName)
+	if err != nil {
+		return pt, fmt.Errorf("get player team: %w", err)
+	}
+	return pt, nil
+}
+
 // GetMachineNames returns a map of machine key to machine name for all machines.
 func (s *SQLiteStore) GetMachineNames(ctx context.Context) (map[string]string, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT key, name FROM machines")
