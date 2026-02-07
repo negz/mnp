@@ -56,6 +56,7 @@ plan before match night.
 | `scout` | Team strengths/weaknesses (general or at venue) |
 | `matchup` | Head-to-head team comparison at venue |
 | `recommend` | Drill-down: who should play a specific machine |
+| `teams` | List all teams with home venues |
 | `venues` | List all venues with keys |
 | `machines` | List all machines with keys |
 
@@ -356,6 +357,34 @@ mnp machines twilight
 | TZ | Twilight Zone |
 
 Useful for looking up short codes when using other commands.
+
+### `mnp teams`
+
+List all teams in the current season. Supports optional search term.
+
+```
+mnp teams [<search>]
+```
+
+| Key | Name | Venue |
+|-----|------|-------|
+| CRA | Castle Crashers | Another Castle (ANC) |
+| FBZ | Flipper Blitz | Full Tilt Ballard (FTB) |
+| GPA | Graveyard Players Association | Coin-Op Game Room (STN) |
+| ... | ... | ... |
+
+```
+mnp teams castle
+```
+
+| Key | Name | Venue |
+|-----|------|-------|
+| CRA | Castle Crashers | Another Castle (ANC) |
+
+Search matches against both key and name. Useful for finding team keys and
+their home venues when using other commands.
+
+---
 
 ## Metrics
 

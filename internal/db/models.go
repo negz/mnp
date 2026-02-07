@@ -94,20 +94,22 @@ func (s *SQLiteStore) UpsertVenue(ctx context.Context, key, name string) (int64,
 
 // Team represents a league team.
 type Team struct {
-	ID       int64
-	Key      string
-	Name     string
-	SeasonID int64
+	ID          int64
+	Key         string
+	Name        string
+	SeasonID    int64
+	HomeVenueID int64
 }
 
 // UpsertTeam inserts or updates a team and returns its ID.
 func (s *SQLiteStore) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 	if _, err := s.db.ExecContext(ctx, `
-		INSERT INTO teams (key, name, season_id)
-		VALUES (?, ?, ?)
+		INSERT INTO teams (key, name, season_id, home_venue_id)
+		VALUES (?, ?, ?, ?)
 		ON CONFLICT(key, season_id) DO UPDATE SET
-			name = excluded.name
-	`, t.Key, t.Name, t.SeasonID); err != nil {
+			name = excluded.name,
+			home_venue_id = excluded.home_venue_id
+	`, t.Key, t.Name, t.SeasonID, t.HomeVenueID); err != nil {
 		return 0, fmt.Errorf("upsert team %s: %w", t.Key, err)
 	}
 

@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS teams (
     key TEXT NOT NULL,              -- Short code (e.g., 'CRA', 'PYC')
     name TEXT NOT NULL,             -- Full name (e.g., 'Castle Crashers')
     season_id INTEGER NOT NULL REFERENCES seasons(id),
+    home_venue_id INTEGER REFERENCES venues(id),
     UNIQUE(key, season_id)
 );
 

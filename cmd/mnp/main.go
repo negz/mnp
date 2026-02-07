@@ -13,6 +13,7 @@ import (
 	"github.com/negz/mnp/cmd/mnp/recommend"
 	"github.com/negz/mnp/cmd/mnp/schema"
 	"github.com/negz/mnp/cmd/mnp/scout"
+	"github.com/negz/mnp/cmd/mnp/teams"
 	"github.com/negz/mnp/cmd/mnp/venues"
 	"github.com/negz/mnp/internal/cache"
 )
@@ -23,6 +24,7 @@ type cli struct {
 	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
 	Scout     scout.Command     `cmd:"" help:"Scout a team's strengths and weaknesses."`
 	Matchup   matchup.Command   `cmd:"" help:"Compare two teams head-to-head at a venue."`
+	Teams     teams.Command     `cmd:"" help:"List all teams."`
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
 	DB        dbCmd             `cmd:"" help:"Database utilities."`

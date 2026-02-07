@@ -387,10 +387,20 @@ func (c *Client) loadSeasonJSON(ctx context.Context, seasonPath string, seasonID
 	}
 
 	for _, t := range season.Teams {
+		var venueID int64
+		if t.Venue != "" {
+			var err error
+			venueID, err = c.store.UpsertVenue(ctx, t.Venue, t.Venue)
+			if err != nil {
+				return fmt.Errorf("upsert venue %s: %w", t.Venue, err)
+			}
+		}
+
 		teamID, err := c.store.UpsertTeam(ctx, db.Team{
-			Key:      t.Key,
-			Name:     t.Name,
-			SeasonID: seasonID,
+			Key:         t.Key,
+			Name:        t.Name,
+			SeasonID:    seasonID,
+			HomeVenueID: venueID,
 		})
 		if err != nil {
 			return err
