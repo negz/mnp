@@ -59,6 +59,7 @@ plan before match night.
 | `teams` | List all teams with home venues |
 | `venues` | List all venues with keys |
 | `machines` | List all machines with keys |
+| `serve` | Start the web UI |
 
 > **Note**: Examples below use markdown tables for readability. Actual CLI output
 > uses bordered ASCII tables.
@@ -449,6 +450,119 @@ ORDER BY games DESC;
 -- League average: same query without team filter
 ```
 
+## Web UI (`mnp serve`)
+
+The web UI makes MNP accessible to non-technical team members and usable
+during matches on a phone. It mirrors the CLI's analytical commands but
+adds a team-focused landing page built around the season schedule.
+
+### Running
+
+```
+mnp serve [--addr :8080] [--db mnp.db]
+```
+
+Starts an HTTP server. Logs to stdout. Designed to sit behind a reverse
+proxy (e.g. Caddy) that terminates TLS. Each replica syncs its own database
+on startup and every 24 hours.
+
+### Architecture
+
+- **Single binary**: No separate frontend deployment. One binary to build
+  and run.
+- **Responsive**: Works on both mobile and desktop browsers.
+- **URL-driven state**: All inputs are URL parameters, so pages are
+  shareable and bookmarkable (e.g. `/matchup?venue=AAB&t1=CRA&t2=PYC`).
+- **Auto-sync**: Syncs data automatically every 24 hours. The MNP data
+  archive is updated every few days, so this is sufficient.
+
+### Pages
+
+```
+[Home]  [Matchup]  [Scout]  [Recommend]  [Lookup]
+```
+
+#### Home (Team Schedule)
+
+The landing page. A team selector (dropdown, remembered in localStorage)
+shows that team's upcoming matches for the current season.
+
+```
+┌──────────────────────────────────────────┐
+│  [Castle Crashers ▾]  Matchup Scout ...  │
+├──────────────────────────────────────────┤
+│                                          │
+│  Wk 3 · Mon Feb 16 · at Add-a-Ball      │
+│  vs Pin Pals (PNP)                       │
+│  [Matchup]  [Scout PNP]                  │
+│                                          │
+│  Wk 4 · Mon Feb 23 · at Coin-Op         │
+│  @ Tilt Collective (TLC)                 │
+│  [Matchup]  [Scout TLC]                  │
+│                                          │
+│  Wk 5 · Mon Mar 2 · at Another Castle   │
+│  vs Silverballers (SLV)                  │
+│  [Matchup]  [Scout SLV]                  │
+│                                          │
+└──────────────────────────────────────────┘
+```
+
+- **Future matches only** — past results aren't shown (the MNP website
+  covers this well already).
+- Each match shows week, date, venue, and opponent.
+- **[Matchup]** links to the matchup page with venue and opponent
+  pre-filled from the schedule.
+- **[Scout]** links to scout with the opponent pre-filled.
+- Home/away indicated by "vs" (home) and "@" (away).
+
+#### Matchup
+
+Same as CLI `matchup`. Inputs: venue (dropdown), team 1, team 2 — all
+pre-filled when arriving from Home. Shows the comparison table with
+confidence indicators and advantage summary. Tapping a machine row could
+expand or link to Recommend for that team + machine.
+
+Also accessible standalone from the nav for ad-hoc comparisons (e.g.
+playoff matchups not in the regular season schedule).
+
+#### Scout
+
+Same as CLI `scout`. Inputs: team (dropdown), venue (optional dropdown).
+Shows venue-specific + global tables when venue is specified. Tapping a
+machine row could link to Recommend for that team + machine.
+
+#### Recommend
+
+Same as CLI `recommend`. Inputs: team, machine, optionally venue and
+opponent — all dropdowns. Typically reached from Matchup or Scout rather
+than directly.
+
+#### Lookup
+
+Collapses the `teams`, `venues`, and `machines` CLI commands into one page
+with tabs. Each tab shows a searchable, sortable table. Tapping a team
+links to its Scout page.
+
+### Data Requirements
+
+The web UI requires schedule data that the CLI commands don't use. This
+means importing from `matches.csv` (or `season.json` schedule entries) into
+a new `schedule` table:
+
+```sql
+CREATE TABLE IF NOT EXISTS schedule (
+    id INTEGER PRIMARY KEY,
+    season_id INTEGER NOT NULL REFERENCES seasons(id),
+    week INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    home_team_id INTEGER NOT NULL REFERENCES teams(id),
+    away_team_id INTEGER NOT NULL REFERENCES teams(id),
+    venue_id INTEGER NOT NULL REFERENCES venues(id)
+);
+```
+
+All other pages reuse existing CLI queries against the current schema.
+
 ## Future Work
 
 1. **Match planning (`plan` command)**: Given a venue and opponent, recommend
@@ -472,3 +586,8 @@ ORDER BY games DESC;
 
 3. **Team key vs name**: Commands use team key (CRA) for brevity. Should also
    support full names? Probably yes, with fuzzy matching.
+
+4. **Playoff schedule**: Regular season schedule is in `matches.csv` and
+   `season.json`. Playoff brackets may use a different format or not appear
+   in the archive until they're scheduled. The standalone Matchup page
+   serves as a fallback when the schedule doesn't cover a match.
