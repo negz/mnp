@@ -11,6 +11,7 @@ import (
 	"github.com/negz/mnp/cmd/mnp/query"
 	"github.com/negz/mnp/cmd/mnp/recommend"
 	"github.com/negz/mnp/cmd/mnp/schema"
+	"github.com/negz/mnp/cmd/mnp/scout"
 	"github.com/negz/mnp/cmd/mnp/venues"
 	"github.com/negz/mnp/internal/cache"
 )
@@ -21,6 +22,7 @@ type cli struct {
 	Query     query.Command     `cmd:"" help:"Run a SQL query against the database."`
 	Schema    schema.Command    `cmd:"" help:"Print the database schema."`
 	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
+	Scout     scout.Command     `cmd:"" help:"Scout a team's strengths and weaknesses."`
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
 

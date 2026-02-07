@@ -100,9 +100,9 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore) error
 		rows = append(rows, []string{
 			name,
 			fmt.Sprintf("%d", s.Games),
-			formatScore(s.P50Score),
-			formatScore(s.P75Score),
-			formatScore(float64(s.MaxScore)),
+			output.FormatScore(s.P50Score),
+			output.FormatScore(s.P75Score),
+			output.FormatScore(float64(s.MaxScore)),
 		})
 	}
 
@@ -177,10 +177,10 @@ func (c *Command) runWithOpponent(ctx context.Context, store *db.SQLiteStore) er
 		switch {
 		case diff > 1_000_000:
 			assessment = fmt.Sprintf("%s outscores %s's best (%s) by ~%s P50. Strong pick.",
-				ourBest.Name, c.Opponent, theirBest.Name, formatScore(diff))
+				ourBest.Name, c.Opponent, theirBest.Name, output.FormatScore(diff))
 		case diff < -1_000_000:
 			assessment = fmt.Sprintf("%s's best (%s) outscores %s by ~%s P50. Weak pick.",
-				c.Opponent, theirBest.Name, ourBest.Name, formatScore(-diff))
+				c.Opponent, theirBest.Name, ourBest.Name, output.FormatScore(-diff))
 		default:
 			assessment = fmt.Sprintf("%s and %s's best (%s) are roughly even. Contested.",
 				ourBest.Name, c.Opponent, theirBest.Name)
@@ -199,24 +199,10 @@ func statsToRows(stats []db.PlayerStats) [][]string {
 		rows[i] = []string{
 			s.Name,
 			fmt.Sprintf("%d", s.Games),
-			formatScore(s.P50Score),
-			formatScore(s.P75Score),
-			formatScore(float64(s.MaxScore)),
+			output.FormatScore(s.P50Score),
+			output.FormatScore(s.P75Score),
+			output.FormatScore(float64(s.MaxScore)),
 		}
 	}
 	return rows
-}
-
-// formatScore formats a pinball score with appropriate suffix.
-func formatScore(score float64) string {
-	switch {
-	case score >= 1_000_000_000:
-		return fmt.Sprintf("%.1fB", score/1_000_000_000)
-	case score >= 1_000_000:
-		return fmt.Sprintf("%.1fM", score/1_000_000)
-	case score >= 1_000:
-		return fmt.Sprintf("%.1fK", score/1_000)
-	default:
-		return fmt.Sprintf("%.0f", score)
-	}
 }
