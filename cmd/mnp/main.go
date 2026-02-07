@@ -20,15 +20,19 @@ import (
 type cli struct {
 	Verbose bool `help:"Print sync progress." short:"v"`
 
-	Query     query.Command     `cmd:"" help:"Run a SQL query against the database."`
-	Schema    schema.Command    `cmd:"" help:"Print the database schema."`
 	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
 	Scout     scout.Command     `cmd:"" help:"Scout a team's strengths and weaknesses."`
 	Matchup   matchup.Command   `cmd:"" help:"Compare two teams head-to-head at a venue."`
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
+	DB        dbCmd             `cmd:"" help:"Database utilities."`
 
-	DB cache.DB `embed:""`
+	Cache cache.DB `embed:""`
+}
+
+type dbCmd struct {
+	Query  query.Command  `cmd:"" help:"Run a SQL query against the database."`
+	Schema schema.Command `cmd:"" help:"Print the database schema."`
 }
 
 func main() {
@@ -39,7 +43,7 @@ func main() {
 		kong.UsageOnError(),
 	)
 
-	defer c.DB.Close() //nolint:errcheck // Not much we can do about this.
+	defer c.Cache.Close() //nolint:errcheck // Not much we can do about this.
 
 	level := slog.LevelWarn
 	if c.Verbose {
@@ -47,8 +51,8 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 
-	c.DB.SetLogger(log)
-	ctx.Bind(log, &c.DB)
+	c.Cache.SetLogger(log)
+	ctx.Bind(log, &c.Cache)
 
 	ctx.FatalIfErrorf(ctx.Run())
 }
