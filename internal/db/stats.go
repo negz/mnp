@@ -75,7 +75,7 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			 AND ps.rn = (pa.total * 3 + 3) / 4) as p75,
 			(SELECT MAX(score) FROM player_scores ps WHERE ps.player_id = pa.player_id) as max_score
 		FROM player_agg pa
-		ORDER BY p50 DESC
+		ORDER BY p75 DESC
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
