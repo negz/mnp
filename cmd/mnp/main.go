@@ -8,6 +8,7 @@ import (
 	"github.com/alecthomas/kong"
 
 	"github.com/negz/mnp/cmd/mnp/machines"
+	"github.com/negz/mnp/cmd/mnp/matchup"
 	"github.com/negz/mnp/cmd/mnp/query"
 	"github.com/negz/mnp/cmd/mnp/recommend"
 	"github.com/negz/mnp/cmd/mnp/schema"
@@ -23,6 +24,7 @@ type cli struct {
 	Schema    schema.Command    `cmd:"" help:"Print the database schema."`
 	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
 	Scout     scout.Command     `cmd:"" help:"Scout a team's strengths and weaknesses."`
+	Matchup   matchup.Command   `cmd:"" help:"Compare two teams head-to-head at a venue."`
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
 

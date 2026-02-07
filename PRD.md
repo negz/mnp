@@ -215,23 +215,32 @@ mnp matchup ANC CRA PYC
 ```
 
 **Output**: Side-by-side comparison per machine at venue, sorted by edge
-(CRA's relative strength minus PYC's relative strength):
+(descending, your best machines first):
 
-| Machine | CRA P50 | CRA vs Avg | PYC P50 | PYC vs Avg | Edge |
+| Machine | CRA P50 | CRA Likely | PYC P50 | PYC Likely | Edge |
 |---------|---------|------------|---------|------------|------|
-| TZ      | 35M     | +30%       | 28M     | +10%       | CRA +20% |
-| AFM     | 22M     | +15%       | 20M     | +8%        | CRA +7% |
-| MM      | 18M     | +10%       | 25M     | +40%       | PYC +30% |
+| TZ      | 35M     | 40M        | 28M     | 28M        | CRA +12M |
+| AFM     | 22M     | 25M        | 20M     | 20M        | CRA +5M |
+| MM      | 18M     | 21M        | 25M     | 30M        | PYC +9M |
 
-Edge is the difference in relative strength (% above league average P50).
-This is comparable across machines because it's normalized — a +20% edge
-on TZ means the same thing as a +20% edge on MM, even though raw scores
-differ by orders of magnitude.
+- **P50**: Team-wide median (whole roster's performance on this machine)
+- **Likely**: Average P50 of the two players with the most games on this
+  machine (minimum 3 games each). Represents what the team will actually
+  score when they send their best available players.
+- **Edge**: Difference between the two Likely columns. Since this is a
+  same-machine comparison, raw score deltas are valid.
+
+The gap between P50 and Likely is informative — a large gap means the team
+has specialists on that machine. A small gap means their roster is evenly
+spread.
 
 **Analysis**:
-- **CRA advantages**: Machines where CRA relative strength >> PYC
-- **PYC advantages**: Machines where PYC relative strength >> CRA
-- **Contested**: Both teams similarly above (or below) average
+- **CRA advantages**: Machines where CRA Likely >> PYC Likely (pick these)
+- **PYC advantages**: Machines where PYC Likely >> CRA Likely (avoid these)
+- **Contested**: Small edge — expect close games
+
+Use `scout` for more detail on who the likely players are and their
+individual stats.
 
 ---
 
@@ -373,7 +382,7 @@ Useful for looking up short codes when using other commands.
 |---------|-----------|-----------|
 | `recommend` | P50 score (descending) | Same machine — raw scores are directly comparable |
 | `scout` | Play count (descending) | Shows what the team actually plays; relative strength decoration shows quality |
-| `matchup` | Edge (your relative strength minus theirs) | Surfaces where you have the biggest advantage |
+| `matchup` | Edge (your Likely minus their Likely) | Same-machine comparison — shows where your likely players beat theirs |
 | `plan` picking rounds | Edge (your relative strength minus theirs) | Pick machines where your advantage is largest |
 | `plan` opponent predictions | Opponent's relative strength (descending) | Predicts what they'll pick — their strongest machines first |
 
