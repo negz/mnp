@@ -155,15 +155,16 @@ mnp scout PYC
 Shows current roster's performance across all machines they've played (any
 venue). Sorted by play count (games by current roster players only).
 
-| Machine | Games | P50 | P90 | Top Players |
-|---------|-------|-----|-----|-------------|
+| Machine | Games | P50 | P90 | Likely Players |
+|---------|-------|-----|-----|----------------|
 | TZ      | 45    | 35M (+30%) | 68M | Dave (42M), Eve (38M) |
 | MM      | 38    | 18M (+40%) | 35M | Frank (22M), Dave (20M) |
 | AFM     | 22    | 10M (-12%) | 22M | Eve (12M), Gina (11M) |
 
 The `(+30%)` on P50 shows how the team's P50 compares to the league-wide
 P50 for that machine. This makes strength comparable across machines with
-very different scoring scales.
+very different scoring scales. Likely Players shows the two players with the
+most games on that machine (minimum 3 games), with their P50 in parentheses.
 
 **Analysis**:
 - **Strongest machines**: High relative strength (large positive %)
@@ -181,8 +182,8 @@ mnp scout PYC --venue ANC
 Shows current roster's performance on machines at that specific venue.
 Sorted by play count (games by current roster players only).
 
-| Machine | Games | P50 | P90 | Top Players |
-|---------|-------|-----|-----|-------------|
+| Machine | Games | P50 | P90 | Likely Players |
+|---------|-------|-----|-----|----------------|
 | TZ      | 12    | 30M (+13%) | 55M | Alice (35M), Bob (32M) |
 | MM      | 8     | 15M (+10%) | 30M | Carol (18M), Alice (16M) |
 | AFM     | 0     | -          | -   | (no data - see global) |

@@ -54,7 +54,7 @@ func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, leagueP50
 	}
 
 	if err := output.Table(os.Stdout,
-		[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Top Players"},
+		[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
 		statsToRows(stats, leagueP50),
 	); err != nil {
 		return err
@@ -89,7 +89,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 	if len(venueStats) > 0 {
 		fmt.Printf("At %s:\n\n", c.Venue)
 		if err := output.Table(os.Stdout,
-			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Top Players"},
+			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
 			statsToRows(venueStats, leagueP50),
 		); err != nil {
 			return err
@@ -118,7 +118,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 			fmt.Sprintf("%d", gs.Games),
 			output.FormatP50(gs.P50Score, leagueP50[gs.MachineKey]),
 			output.FormatScore(gs.P90Score),
-			formatTopPlayers(gs.TopPlayers),
+			formatLikelyPlayers(gs.LikelyPlayers),
 		})
 	}
 
@@ -126,7 +126,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 		fmt.Println("Global (for context):")
 		fmt.Println()
 		if err := output.Table(os.Stdout,
-			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Top Players"},
+			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
 			rows,
 		); err != nil {
 			return err
@@ -149,19 +149,27 @@ func statsToRows(stats []db.TeamMachineStats, leagueP50 map[string]float64) [][]
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, leagueP50[s.MachineKey]),
 			output.FormatScore(s.P90Score),
-			formatTopPlayers(s.TopPlayers),
+			formatLikelyPlayers(s.LikelyPlayers),
 		}
 	}
 	return rows
 }
 
-// formatTopPlayers formats top players as "Alice, Bob".
-func formatTopPlayers(players []db.TopPlayer) string {
+// formatLikelyPlayers formats likely players as "Alice (35M), Bob (28M)".
+func formatLikelyPlayers(players []db.LikelyPlayer) string {
 	parts := make([]string, len(players))
 	for i, p := range players {
-		parts[i] = p.Name
+		parts[i] = fmt.Sprintf("%s (%s)", shortName(p.Name), output.FormatScore(p.P50Score))
 	}
 	return strings.Join(parts, ", ")
+}
+
+func shortName(name string) string {
+	first, last, ok := strings.Cut(name, " ")
+	if !ok {
+		return name
+	}
+	return first + " " + last[:1]
 }
 
 // printAnalysis prints a summary of strongest and weakest machines by relative

@@ -15,16 +15,17 @@ type PlayerStats struct {
 
 // TeamMachineStats contains aggregated stats for a team on a specific machine.
 type TeamMachineStats struct {
-	MachineKey string
-	Games      int
-	P50Score   float64 // Median (50th percentile)
-	P90Score   float64 // 90th percentile
-	TopPlayers []TopPlayer
+	MachineKey    string
+	Games         int
+	P50Score      float64 // Median (50th percentile)
+	P90Score      float64 // 90th percentile
+	LikelyPlayers []LikelyPlayer
 }
 
-// TopPlayer is a player's P50 score on a machine.
-type TopPlayer struct {
+// LikelyPlayer is a player likely to play a machine, ranked by play count.
+type LikelyPlayer struct {
 	Name     string
+	Games    int
 	P50Score float64
 }
 
@@ -46,7 +47,7 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 	}
 
 	for i := range stats {
-		stats[i].TopPlayers = topPlayers[stats[i].MachineKey]
+		stats[i].LikelyPlayers = topPlayers[stats[i].MachineKey]
 	}
 
 	return stats, nil
@@ -129,9 +130,9 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	return stats, nil
 }
 
-// getTopPlayers returns the top 2 players by P50 score for each machine,
+// getTopPlayers returns the top 2 players by play count for each machine,
 // keyed by machine key.
-func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]TopPlayer, error) {
+func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]LikelyPlayer, error) {
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id
@@ -171,11 +172,12 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 
 	query += `
 		),
-		player_p50 AS (
+		player_agg AS (
 			SELECT DISTINCT
 				machine_key,
 				player_id,
 				name,
+				total as games,
 				(SELECT score FROM player_scores ps2
 				 WHERE ps2.machine_key = ps1.machine_key
 				   AND ps2.player_id = ps1.player_id
@@ -187,11 +189,12 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 			SELECT
 				machine_key,
 				name,
+				games,
 				p50,
-				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY p50 DESC) as rn
-			FROM player_p50
+				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY games DESC, p50 DESC) as rn
+			FROM player_agg
 		)
-		SELECT machine_key, name, p50
+		SELECT machine_key, name, games, p50
 		FROM ranked
 		WHERE rn <= 2
 		ORDER BY machine_key, rn
@@ -203,14 +206,15 @@ func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey strin
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	result := make(map[string][]TopPlayer)
+	result := make(map[string][]LikelyPlayer)
 	for rows.Next() {
 		var machineKey, name string
+		var games int
 		var p50 float64
-		if err := rows.Scan(&machineKey, &name, &p50); err != nil {
+		if err := rows.Scan(&machineKey, &name, &games, &p50); err != nil {
 			return nil, fmt.Errorf("scan top player: %w", err)
 		}
-		result[machineKey] = append(result[machineKey], TopPlayer{Name: name, P50Score: p50})
+		result[machineKey] = append(result[machineKey], LikelyPlayer{Name: name, Games: games, P50Score: p50})
 	}
 
 	if err := rows.Err(); err != nil {
