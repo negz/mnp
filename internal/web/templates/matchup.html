@@ -1,0 +1,78 @@
+{{define "title"}}MNP - Matchup{{end}}
+
+{{define "content"}}
+<h2>Matchup</h2>
+
+<form id="matchup-form" method="get" action="/matchup">
+  <div class="grid">
+    <label>
+      Venue
+      <select name="venue" onchange="document.getElementById('matchup-form').requestSubmit()">
+        <option value="">Select venue</option>
+        {{range .Venues}}
+        <option value="{{.Key}}"{{if eq .Key $.Venue}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      Team 1
+      <select name="t1" onchange="document.getElementById('matchup-form').requestSubmit()">
+        <option value="">Select team</option>
+        {{range .Teams}}
+        <option value="{{.Key}}"{{if eq .Key $.Team1}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      Team 2
+      <select name="t2" onchange="document.getElementById('matchup-form').requestSubmit()">
+        <option value="">Select team</option>
+        {{range .Teams}}
+        <option value="{{.Key}}"{{if eq .Key $.Team2}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+  </div>
+</form>
+
+{{if .Result}}
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Machine</th>
+      <th title="Team median score — what they'll probably score">{{.Team1}} P50</th>
+      <th title="Average P50 of the two players with the most games on this machine">{{.Team1}} Likely</th>
+      <th title="Team median score — what they'll probably score">{{.Team2}} P50</th>
+      <th title="Average P50 of the two players with the most games on this machine">{{.Team2}} Likely</th>
+      <th title="Likely score difference. ▲ high confidence (10+ games), △ medium (3–9), ▼ low (&lt;3)">Edge</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.Machines}}
+    <tr>
+      <td class="td-machine">{{.MachineName}}</td>
+      <td data-label="{{$.Team1}} P50" title="Team median score — what they'll probably score"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1P50}}</a></td>
+      <td data-label="{{$.Team1}} Likely" title="Average P50 of the two players with the most games on this machine"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1Likely}}</a></td>
+      <td data-label="{{$.Team2}} P50" title="Team median score — what they'll probably score"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2P50}}</a></td>
+      <td data-label="{{$.Team2}} Likely" title="Average P50 of the two players with the most games on this machine"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2Likely}}</a></td>
+      <td data-label="Edge" title="Likely score difference. ▲ high confidence (10+ games), △ medium (3–9), ▼ low (&lt;3)">{{formatEdge .Edge $.Team1 $.Team2 .Confidence}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+
+<footer>
+  {{if .Result.Analysis.Team1Advantages}}
+  <p><strong>{{.Team1}} advantages:</strong> {{join .Result.Analysis.Team1Advantages ", "}}</p>
+  {{end}}
+  {{if .Result.Analysis.Team2Advantages}}
+  <p><strong>{{.Team2}} advantages:</strong> {{join .Result.Analysis.Team2Advantages ", "}}</p>
+  {{end}}
+  {{if .Result.Analysis.Contested}}
+  <p><strong>Contested:</strong> {{join .Result.Analysis.Contested ", "}}</p>
+  {{end}}
+</footer>
+{{else if .Error}}
+<p>{{.Error}}</p>
+{{end}}
+{{end}}

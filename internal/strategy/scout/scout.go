@@ -37,7 +37,6 @@ type MachineStats struct {
 	P90Score      float64
 	LeagueP50     float64
 	LikelyPlayers []LikelyPlayer
-	NoVenueData   bool // True when this entry appears in global stats with no venue-specific data.
 }
 
 // Analysis summarizes a team's strongest and weakest machines.
@@ -50,8 +49,7 @@ type Analysis struct {
 type Result struct {
 	Team        string
 	Venue       string         // Empty for global-only queries.
-	VenueStats  []MachineStats // Stats at the venue. Nil if no venue requested or no venue data.
-	GlobalStats []MachineStats // All machines (no venue) or venue machines with global data.
+	GlobalStats []MachineStats // All machines, or filtered to venue machines when a venue is set.
 	Analysis    Analysis
 }
 
@@ -109,19 +107,9 @@ func scoutVenue(ctx context.Context, s Store, team, venue string, leagueP50 map[
 		return nil, fmt.Errorf("load venue machines: %w", err)
 	}
 
-	venueStats, err := s.GetTeamMachineStats(ctx, team, venue)
-	if err != nil {
-		return nil, fmt.Errorf("load team stats at venue: %w", err)
-	}
-
 	globalStats, err := s.GetTeamMachineStats(ctx, team, "")
 	if err != nil {
-		return nil, fmt.Errorf("load team global stats: %w", err)
-	}
-
-	venueDataSet := make(map[string]bool, len(venueStats))
-	for _, s := range venueStats {
-		venueDataSet[s.MachineKey] = true
+		return nil, fmt.Errorf("load team stats: %w", err)
 	}
 
 	// Filter global stats to machines at the venue.
@@ -132,18 +120,11 @@ func scoutVenue(ctx context.Context, s Store, team, venue string, leagueP50 map[
 		}
 	}
 
-	global := make([]MachineStats, len(filtered))
-	for i, gs := range filtered {
-		global[i] = enrichStat(gs, leagueP50, names)
-		global[i].NoVenueData = !venueDataSet[gs.MachineKey]
-	}
-
 	return &Result{
 		Team:        team,
 		Venue:       venue,
-		VenueStats:  enrichStats(venueStats, leagueP50, names),
-		GlobalStats: global,
-		Analysis:    analyze(venueStats, leagueP50, names),
+		GlobalStats: enrichStats(filtered, leagueP50, names),
+		Analysis:    analyze(filtered, leagueP50, names),
 	}, nil
 }
 

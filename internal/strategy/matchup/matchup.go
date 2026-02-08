@@ -28,6 +28,7 @@ type LikelyPlayer struct {
 
 // MachineMatchup is a head-to-head comparison for a single machine.
 type MachineMatchup struct {
+	MachineKey  string
 	MachineName string
 	Team1P50    float64
 	Team1Likely float64 // Average P50 of team 1's likely players.
@@ -107,6 +108,7 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 		l2 := likelyScore(s2.LikelyPlayers)
 
 		machines = append(machines, MachineMatchup{
+			MachineKey:  s1.MachineKey,
 			MachineName: output.MachineName(names, s1.MachineKey),
 			Team1P50:    s1.P50Score,
 			Team1Likely: l1,
@@ -125,6 +127,7 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 
 		l2 := likelyScore(s2.LikelyPlayers)
 		machines = append(machines, MachineMatchup{
+			MachineKey:  key,
 			MachineName: output.MachineName(names, key),
 			Team2P50:    s2.P50Score,
 			Team2Likely: l2,

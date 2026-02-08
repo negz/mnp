@@ -13,6 +13,7 @@ import (
 	"github.com/negz/mnp/cmd/mnp/player"
 	"github.com/negz/mnp/cmd/mnp/recommend"
 	"github.com/negz/mnp/cmd/mnp/scout"
+	"github.com/negz/mnp/cmd/mnp/serve"
 	"github.com/negz/mnp/cmd/mnp/teams"
 	"github.com/negz/mnp/cmd/mnp/venues"
 	"github.com/negz/mnp/internal/cache"
@@ -29,6 +30,7 @@ type cli struct {
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
 	DB        db.Command        `cmd:"" help:"Database utilities."`
+	Serve     serve.Command     `cmd:"" help:"Start the web UI."`
 
 	Cache cache.DB `embed:""`
 }

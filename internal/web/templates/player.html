@@ -1,0 +1,51 @@
+{{define "title"}}MNP - {{.Name}}{{end}}
+
+{{define "content"}}
+{{if .Result}}
+<h2>{{.Name}}</h2>
+
+{{if .Result.Team}}
+<p>Team: <a href="/t/{{.Result.Team.Key}}">{{.Result.Team.Name}}</a></p>
+{{end}}
+
+{{if .Result.GlobalStats}}
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Machine</th>
+      <th title="Number of games played on this machine">Games</th>
+      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
+      <th title="90th percentile score — their ceiling">P90</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.GlobalStats}}
+    <tr>
+      {{if $.Result.Team}}
+      <td class="td-machine"><a href="/t/{{$.Result.Team.Key}}/recommend/{{.MachineKey}}">{{.MachineName}}</a></td>
+      {{else}}
+      <td class="td-machine">{{.MachineName}}</td>
+      {{end}}
+      <td data-label="Games" title="Number of games played">{{.Games}}</td>
+      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+<footer>
+  {{if .Result.Analysis.Strongest}}
+  <p><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</p>
+  {{end}}
+  {{if .Result.Analysis.Weakest}}
+  <p><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</p>
+  {{end}}
+</footer>
+
+{{else if .Error}}
+<h2>{{.Name}}</h2>
+<p>{{.Error}}</p>
+{{end}}
+{{end}}

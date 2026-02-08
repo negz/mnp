@@ -18,8 +18,8 @@ func headers() []string {
 
 // Command scouts a team's strengths and weaknesses across machines.
 type Command struct {
-	Team  string `arg:""                                 help:"Team key (e.g., CRA)."`
-	Venue string `help:"Filter to venue-specific stats." short:"e"`
+	Team  string `arg:""                                         help:"Team key (e.g., CRA)."`
+	Venue string `help:"Filter to machines at a specific venue." short:"e"`
 }
 
 // Run executes the scout command.
@@ -40,34 +40,13 @@ func (c *Command) Run(d *cache.DB) error {
 		return fmt.Errorf("scout %s: %w", c.Team, err)
 	}
 
-	if len(r.VenueStats) == 0 && len(r.GlobalStats) == 0 {
+	if len(r.GlobalStats) == 0 {
 		fmt.Printf("No data for %s\n", c.Team)
 		return nil
 	}
 
-	if r.Venue != "" && len(r.VenueStats) > 0 {
-		fmt.Printf("At %s:\n\n", r.Venue)
-		if err := output.Table(os.Stdout, headers(), statsToRows(r.VenueStats)); err != nil {
-			return fmt.Errorf("write table: %w", err)
-		}
-		fmt.Println()
-	}
-
-	if len(r.GlobalStats) > 0 {
-		if r.Venue != "" {
-			fmt.Println("Global (for context):")
-			fmt.Println()
-		}
-		if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
-			return fmt.Errorf("write table: %w", err)
-		}
-
-		for _, s := range r.GlobalStats {
-			if s.NoVenueData {
-				fmt.Printf("*No %s data\n", r.Venue)
-				break
-			}
-		}
+	if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
+		return fmt.Errorf("write table: %w", err)
 	}
 
 	printAnalysis(r.Analysis)
@@ -77,12 +56,8 @@ func (c *Command) Run(d *cache.DB) error {
 func statsToRows(stats []scout.MachineStats) [][]string {
 	rows := make([][]string, len(stats))
 	for i, s := range stats {
-		name := s.MachineName
-		if s.NoVenueData {
-			name += "*"
-		}
 		rows[i] = []string{
-			name,
+			s.MachineName,
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, s.LeagueP50),
 			output.FormatScore(s.P90Score),

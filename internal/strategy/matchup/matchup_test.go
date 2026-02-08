@@ -115,6 +115,7 @@ func TestAnalyze(t *testing.T) {
 					Team2: "PYC",
 					Machines: []MachineMatchup{
 						{
+							MachineKey:  "TAF",
 							MachineName: "The Addams Family",
 							Team1P50:    50_000_000,
 							Team1Likely: 50_000_000,
@@ -124,6 +125,7 @@ func TestAnalyze(t *testing.T) {
 							Confidence:  ConfidenceHigh,
 						},
 						{
+							MachineKey:  "MM",
 							MachineName: "Medieval Madness",
 							Team1P50:    20_000_000,
 							Team1Likely: 25_000_000,
@@ -177,6 +179,7 @@ func TestAnalyze(t *testing.T) {
 					Team2: "PYC",
 					Machines: []MachineMatchup{
 						{
+							MachineKey:  "TZ",
 							MachineName: "Twilight Zone",
 							Team2P50:    10_000_000,
 							Team2Likely: 10_000_000,

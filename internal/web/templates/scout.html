@@ -1,0 +1,69 @@
+{{define "title"}}MNP - Scout{{if .TeamName}} {{.TeamName}}{{end}}{{end}}
+
+{{define "content"}}
+<h2>Scout</h2>
+
+<form id="scout-form" method="get" action="/scout">
+  <div class="grid">
+    <label>
+      Team
+      <select name="team" onchange="document.getElementById('scout-form').requestSubmit()">
+        <option value="">Select team</option>
+        {{range .Teams}}
+        <option value="{{.Key}}"{{if eq .Key $.Team}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      Venue <small>(optional)</small>
+      <select name="venue" onchange="document.getElementById('scout-form').requestSubmit()">
+        <option value="">All machines</option>
+        {{range .Venues}}
+        <option value="{{.Key}}"{{if eq .Key $.Venue}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+  </div>
+</form>
+
+{{if .Result}}
+<h3>{{.TeamName}}{{if .Result.Venue}} — {{.Result.Venue}} machines{{end}}</h3>
+
+{{if .Result.GlobalStats}}
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Machine</th>
+      <th title="Number of team games on this machine league-wide">Games</th>
+      <th title="Team median score vs league average for this machine">P50 (vs Avg)</th>
+      <th title="90th percentile score — the team's ceiling">P90</th>
+      <th title="Players most likely to play this machine, based on games played">Likely Players</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.GlobalStats}}
+    <tr>
+      <td class="td-machine"><a href="/t/{{$.Team}}/recommend/{{.MachineKey}}">{{.MachineName}}</a></td>
+      <td data-label="Games" title="Team games league-wide">{{.Games}}</td>
+      <td data-label="P50 (vs Avg)" title="Team median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+      <td data-label="Likely Players" title="Most likely players for this machine">{{range $i, $p := .LikelyPlayers}}{{if $i}}, {{end}}<a href="/p/{{pathEscape $p.Name}}">{{shortName $p.Name}}</a> ({{formatScore $p.P50Score}}){{end}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+<footer>
+  {{if .Result.Analysis.Strongest}}
+  <p><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</p>
+  {{end}}
+  {{if .Result.Analysis.Weakest}}
+  <p><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</p>
+  {{end}}
+</footer>
+
+{{else if .Error}}
+<p>{{.Error}}</p>
+{{end}}
+{{end}}

@@ -866,3 +866,287 @@ func TestMatchLoad(t *testing.T) {
 		})
 	}
 }
+
+func TestScheduleTransform(t *testing.T) {
+	s := Schedule{raw: scheduleRawJSON{
+		Weeks: []weekRawJSON{
+			{
+				N:    "3",
+				Date: "02/16/2026",
+				Matches: []weekMatchJSON{
+					{
+						MatchKey: "mnp-23-3-CRA-PIN",
+						AwayKey:  "CRA",
+						HomeKey:  "PIN",
+						Venue:    venueRefJSON{Key: "ADD", Name: "Add-a-Ball"},
+					},
+				},
+			},
+			{
+				N:    "4",
+				Date: "02/23/2026",
+				Matches: []weekMatchJSON{
+					{
+						MatchKey: "mnp-23-4-PIN-CRA",
+						AwayKey:  "PIN",
+						HomeKey:  "CRA",
+						Venue:    venueRefJSON{Key: "ANC", Name: "Another Castle"},
+					},
+				},
+			},
+		},
+	}}
+
+	got := s.Transform()
+
+	want := []ScheduleMatchData{
+		{
+			Key:     "mnp-23-3-CRA-PIN",
+			Week:    3,
+			Date:    "2026-02-16",
+			HomeKey: "PIN",
+			AwayKey: "CRA",
+			Venue:   VenueRef{Key: "ADD", Name: "Add-a-Ball"},
+		},
+		{
+			Key:     "mnp-23-4-PIN-CRA",
+			Week:    4,
+			Date:    "2026-02-23",
+			HomeKey: "CRA",
+			AwayKey: "PIN",
+			Venue:   VenueRef{Key: "ANC", Name: "Another Castle"},
+		},
+	}
+
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Schedule.Transform(): -want, +got:\n%s", diff)
+	}
+}
+
+func TestScheduleLoad(t *testing.T) {
+	type args struct {
+		schedule Schedule
+		seasonID int64
+		store    Store
+	}
+
+	type want struct {
+		err error
+	}
+
+	schedule := Schedule{raw: scheduleRawJSON{
+		Weeks: []weekRawJSON{
+			{
+				N:    "3",
+				Date: "02/16/2026",
+				Matches: []weekMatchJSON{
+					{
+						MatchKey: "mnp-23-3-CRA-PIN",
+						AwayKey:  "CRA",
+						HomeKey:  "PIN",
+						Venue:    venueRefJSON{Key: "ADD", Name: "Add-a-Ball"},
+					},
+				},
+			},
+		},
+	}}
+
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   want
+	}{
+		"Success": {
+			reason: "A schedule with one week and one match should upsert the venue and match with the correct transformed data.",
+			args: args{
+				schedule: schedule,
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, key, name string) (int64, error) {
+						if diff := cmp.Diff("ADD", key); diff != "" {
+							t.Errorf("UpsertVenue key: -want, +got:\n%s", diff)
+						}
+						if diff := cmp.Diff("Add-a-Ball", name); diff != "" {
+							t.Errorf("UpsertVenue name: -want, +got:\n%s", diff)
+						}
+						return 10, nil
+					},
+					MockGetTeamID: func(_ context.Context, key string, seasonID int64) (int64, error) {
+						if diff := cmp.Diff(int64(100), seasonID); diff != "" {
+							t.Errorf("GetTeamID seasonID: -want, +got:\n%s", diff)
+						}
+						if key == "PIN" {
+							return 50, nil
+						}
+						return 60, nil
+					},
+					MockUpsertMatch: func(_ context.Context, got db.Match) (int64, error) {
+						want := db.Match{
+							Key:        "mnp-23-3-CRA-PIN",
+							SeasonID:   100,
+							Week:       3,
+							Date:       "2026-02-16",
+							HomeTeamID: 50,
+							AwayTeamID: 60,
+							VenueID:    10,
+						}
+						if diff := cmp.Diff(want, got); diff != "" {
+							t.Errorf("UpsertMatch(...): -want, +got:\n%s", diff)
+						}
+						return 500, nil
+					},
+				},
+			},
+			want: want{},
+		},
+		"NoVenue": {
+			reason: "A schedule match without a venue should not upsert a venue.",
+			args: args{
+				schedule: Schedule{raw: scheduleRawJSON{
+					Weeks: []weekRawJSON{
+						{
+							N:    "1",
+							Date: "02/02/2026",
+							Matches: []weekMatchJSON{
+								{MatchKey: "mnp-23-1-A-B", HomeKey: "B", AwayKey: "A"},
+							},
+						},
+					},
+				}},
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						t.Fatal("UpsertVenue should not be called for match without venue")
+						return 0, nil
+					},
+					MockGetTeamID: func(_ context.Context, _ string, _ int64) (int64, error) {
+						return 50, nil
+					},
+					MockUpsertMatch: func(_ context.Context, _ db.Match) (int64, error) {
+						return 500, nil
+					},
+				},
+			},
+			want: want{},
+		},
+		"UpsertVenueError": {
+			reason: "An error upserting a schedule match venue should be returned.",
+			args: args{
+				schedule: schedule,
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						return 0, errors.New("boom")
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+		"GetHomeTeamError": {
+			reason: "An error resolving the home team should be returned.",
+			args: args{
+				schedule: schedule,
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						return 10, nil
+					},
+					MockGetTeamID: func(_ context.Context, key string, _ int64) (int64, error) {
+						if key == "PIN" {
+							return 0, errors.New("boom")
+						}
+						return 60, nil
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+		"GetAwayTeamError": {
+			reason: "An error resolving the away team should be returned.",
+			args: args{
+				schedule: schedule,
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						return 10, nil
+					},
+					MockGetTeamID: func(_ context.Context, key string, _ int64) (int64, error) {
+						if key == "CRA" {
+							return 0, errors.New("boom")
+						}
+						return 50, nil
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+		"UpsertMatchError": {
+			reason: "An error upserting a schedule match should be returned.",
+			args: args{
+				schedule: schedule,
+				seasonID: 100,
+				store: &MockStore{
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						return 10, nil
+					},
+					MockGetTeamID: func(_ context.Context, _ string, _ int64) (int64, error) {
+						return 50, nil
+					},
+					MockUpsertMatch: func(_ context.Context, _ db.Match) (int64, error) {
+						return 0, errors.New("boom")
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := tc.args.schedule.Load(context.Background(), tc.args.store, tc.args.seasonID)
+
+			if diff := cmp.Diff(tc.want.err, err, cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\nSchedule.Load(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestIsoDate(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		input  string
+		want   string
+	}{
+		"MMDDYYYY": {
+			reason: "MM/DD/YYYY should be converted to YYYY-MM-DD.",
+			input:  "02/16/2026",
+			want:   "2026-02-16",
+		},
+		"AlreadyISO": {
+			reason: "An ISO date should be returned unchanged.",
+			input:  "2026-02-16",
+			want:   "2026-02-16",
+		},
+		"Empty": {
+			reason: "An empty string should be returned unchanged.",
+			input:  "",
+			want:   "",
+		},
+		"Garbage": {
+			reason: "An unparseable string should be returned unchanged.",
+			input:  "not-a-date",
+			want:   "not-a-date",
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := isoDate(tc.input)
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("\n%s\nisoDate(%q): -want, +got:\n%s", tc.reason, tc.input, diff)
+			}
+		})
+	}
+}

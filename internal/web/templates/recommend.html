@@ -1,0 +1,128 @@
+{{define "title"}}MNP - Recommend{{end}}
+
+{{define "content"}}
+<h2>Recommend</h2>
+
+<form id="recommend-form" method="get" action="/recommend">
+  <div class="grid">
+    <label>
+      Team
+      <select name="team" onchange="document.getElementById('recommend-form').requestSubmit()">
+        <option value="">Select team</option>
+        {{range .Teams}}
+        <option value="{{.Key}}"{{if eq .Key $.Team}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+    <label>
+      Machine
+      <select name="machine" onchange="document.getElementById('recommend-form').requestSubmit()">
+        <option value="">Select machine</option>
+        {{range .Machines}}
+        <option value="{{.Key}}"{{if eq .Key $.Machine}} selected{{end}}>{{.Name}}</option>
+        {{end}}
+      </select>
+    </label>
+  </div>
+</form>
+
+{{if .Result}}
+<h3>{{.TeamName}} on {{.MachineName}}</h3>
+
+{{if .Result.Opponent}}
+<h4>{{.Team}} options</h4>
+{{end}}
+
+{{if .Result.VenueStats}}
+<h4>At {{.Result.Venue}}</h4>
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Player</th>
+      <th title="Number of games played on this machine">Games</th>
+      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
+      <th title="90th percentile score — their ceiling">P90</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.VenueStats}}
+    <tr>
+      <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a></td>
+      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
+      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+<h4>Global (for context)</h4>
+{{end}}
+
+{{if .Result.GlobalStats}}
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Player</th>
+      <th title="Number of games played on this machine">Games</th>
+      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
+      <th title="90th percentile score — their ceiling">P90</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.GlobalStats}}
+    <tr>
+      <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a>{{if .NoVenueData}}*{{end}}</td>
+      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
+      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{if .Result.Opponent}}
+<h4>{{.Result.Opponent}} likely players</h4>
+{{if .Result.OpponentStats}}
+<table class="striped responsive">
+  <thead>
+    <tr>
+      <th>Player</th>
+      <th title="Number of games played on this machine">Games</th>
+      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
+      <th title="90th percentile score — their ceiling">P90</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Result.OpponentStats}}
+    <tr>
+      <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a></td>
+      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
+      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+<p>No data.</p>
+{{end}}
+
+{{if .Result.Assessment}}
+<footer>
+  <p><strong>Assessment:</strong> {{.FormatAssessment}}</p>
+</footer>
+{{end}}
+{{end}}
+
+{{if .Venue}}
+{{range .Result.GlobalStats}}{{if .NoVenueData}}
+<p><small>*No {{$.Venue}} data</small></p>
+{{break}}
+{{end}}{{end}}
+{{end}}
+
+{{else if .Error}}
+<p>{{.Error}}</p>
+{{end}}
+{{end}}

@@ -1,0 +1,34 @@
+{{define "title"}}MNP - {{.TeamName}}{{end}}
+
+{{define "content"}}
+<h2>{{.TeamName}}</h2>
+
+{{if .Matches}}
+<table class="striped schedule">
+  <thead>
+    <tr>
+      <th>Opponent</th>
+      <th>Wk</th>
+      <th>Date</th>
+      <th>Venue</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Matches}}
+    <tr>
+      {{if eq .HomeTeamKey $.TeamKey}}
+      <td class="td-team"><a href="/matchup?venue={{.VenueKey}}&t1={{.HomeTeamKey}}&t2={{.AwayTeamKey}}">vs {{.AwayTeam}}</a></td>
+      {{else}}
+      <td class="td-team"><a href="/matchup?venue={{.VenueKey}}&t1={{.HomeTeamKey}}&t2={{.AwayTeamKey}}">@ {{.HomeTeam}}</a></td>
+      {{end}}
+      <td class="td-meta">Wk {{.Week}}</td>
+      <td class="td-meta">{{.Date}}</td>
+      <td class="td-venue">{{.Venue}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{else}}
+  <p>No upcoming matches.</p>
+{{end}}
+{{end}}

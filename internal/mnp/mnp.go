@@ -139,6 +139,14 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 			return fmt.Errorf("load season %d: %w", seasonNum, err)
 		}
 
+		var schedule Schedule
+		if err := schedule.Extract(filepath.Join(seasonPath, "season.json")); err != nil {
+			return fmt.Errorf("extract schedule %d: %w", seasonNum, err)
+		}
+		if err := schedule.Load(ctx, c.store, seasonID); err != nil {
+			return fmt.Errorf("load schedule %d: %w", seasonNum, err)
+		}
+
 		matchFiles, err := findMatchFiles(seasonPath)
 		if err != nil {
 			return fmt.Errorf("find matches for season %d: %w", seasonNum, err)

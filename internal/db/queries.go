@@ -196,7 +196,8 @@ func (s *SQLiteStore) ListSchedule(ctx context.Context, after string) ([]Schedul
 		JOIN teams ht ON ht.id = m.home_team_id
 		JOIN teams at ON at.id = m.away_team_id
 		LEFT JOIN venues v ON v.id = m.venue_id
-		WHERE m.date >= ?
+		WHERE m.season_id = (SELECT MAX(id) FROM seasons)
+		  AND m.date >= ?
 		ORDER BY m.week, m.date
 	`, after)
 	if err != nil {

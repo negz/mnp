@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 
 	"github.com/negz/mnp/internal/db"
 )
@@ -212,6 +213,101 @@ func (s *Season) Load(ctx context.Context, st Store, seasonNum int) (int64, erro
 	return seasonID, nil
 }
 
+// Schedule extracts, transforms, and loads the season schedule from
+// season.json's weeks array. This creates match stubs for future weeks
+// that don't yet have individual match files in the archive.
+type Schedule struct {
+	raw scheduleRawJSON
+}
+
+type scheduleRawJSON struct {
+	Weeks []weekRawJSON `json:"weeks"`
+}
+
+type weekRawJSON struct {
+	N       string          `json:"n"`
+	Date    string          `json:"date"`
+	Matches []weekMatchJSON `json:"matches"`
+}
+
+type weekMatchJSON struct {
+	MatchKey string       `json:"match_key"`
+	AwayKey  string       `json:"away_key"`
+	HomeKey  string       `json:"home_key"`
+	Venue    venueRefJSON `json:"venue"`
+}
+
+// ScheduleMatchData is a transformed schedule entry ready for loading.
+type ScheduleMatchData struct {
+	Key     string
+	Week    int
+	Date    string
+	HomeKey string
+	AwayKey string
+	Venue   VenueRef
+}
+
+// Extract reads and decodes schedule data from a season.json file.
+func (s *Schedule) Extract(path string) error {
+	return decodeJSONFile(path, &s.raw)
+}
+
+// Transform returns clean schedule entries from the raw JSON data.
+func (s *Schedule) Transform() []ScheduleMatchData {
+	var out []ScheduleMatchData
+	for _, w := range s.raw.Weeks {
+		weekNum, _ := strconv.Atoi(w.N)
+		date := isoDate(w.Date)
+		for _, m := range w.Matches {
+			out = append(out, ScheduleMatchData{
+				Key:     m.MatchKey,
+				Week:    weekNum,
+				Date:    date,
+				HomeKey: m.HomeKey,
+				AwayKey: m.AwayKey,
+				Venue:   VenueRef{Key: m.Venue.Key, Name: m.Venue.Name},
+			})
+		}
+	}
+	return out
+}
+
+// Load inserts the transformed schedule data into the store as match stubs.
+func (s *Schedule) Load(ctx context.Context, st Store, seasonID int64) error {
+	for _, m := range s.Transform() {
+		var venueID int64
+		if m.Venue.Key != "" {
+			var err error
+			venueID, err = st.UpsertVenue(ctx, m.Venue.Key, m.Venue.Name)
+			if err != nil {
+				return fmt.Errorf("upsert venue %s: %w", m.Venue.Key, err)
+			}
+		}
+
+		homeTeamID, err := st.GetTeamID(ctx, m.HomeKey, seasonID)
+		if err != nil {
+			return fmt.Errorf("get home team %s: %w", m.HomeKey, err)
+		}
+		awayTeamID, err := st.GetTeamID(ctx, m.AwayKey, seasonID)
+		if err != nil {
+			return fmt.Errorf("get away team %s: %w", m.AwayKey, err)
+		}
+
+		if _, err := st.UpsertMatch(ctx, db.Match{
+			Key:        m.Key,
+			SeasonID:   seasonID,
+			Week:       m.Week,
+			Date:       m.Date,
+			HomeTeamID: homeTeamID,
+			AwayTeamID: awayTeamID,
+			VenueID:    venueID,
+		}); err != nil {
+			return fmt.Errorf("upsert schedule match %s: %w", m.Key, err)
+		}
+	}
+	return nil
+}
+
 // Match extracts, transforms, and loads match data.
 type Match struct {
 	raw matchRawJSON
@@ -347,7 +443,7 @@ func (m *Match) Transform() MatchData {
 	return MatchData{
 		Key:     m.raw.Key,
 		Week:    weekNum,
-		Date:    m.raw.Date,
+		Date:    isoDate(m.raw.Date),
 		Venue:   VenueRef{Key: m.raw.Venue.Key, Name: m.raw.Venue.Name},
 		HomeKey: m.raw.Home.Key,
 		AwayKey: m.raw.Away.Key,
@@ -394,6 +490,14 @@ func buildResults(g gameJSON, playerNames map[string]string, isDoubles bool) []R
 		})
 	}
 	return results
+}
+
+func isoDate(s string) string {
+	t, err := time.Parse("01/02/2006", s)
+	if err != nil {
+		return s
+	}
+	return t.Format("2006-01-02")
 }
 
 // Load inserts the transformed match data into the store.

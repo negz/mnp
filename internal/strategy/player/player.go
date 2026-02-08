@@ -30,7 +30,6 @@ type MachineStats struct {
 	P50Score    float64
 	P90Score    float64
 	LeagueP50   float64
-	NoVenueData bool // True in global stats when this machine has no venue-specific data.
 }
 
 // Team is the player's current team.
@@ -50,8 +49,7 @@ type Result struct {
 	Name        string
 	Venue       string         // Empty for global-only queries.
 	Team        *Team          // Nil if player's team can't be determined.
-	VenueStats  []MachineStats // Nil if no venue requested or no venue data.
-	GlobalStats []MachineStats // All machines (no venue) or venue machines with global data.
+	GlobalStats []MachineStats // All machines, or filtered to venue machines when a venue is set.
 	Analysis    Analysis
 }
 
@@ -110,11 +108,6 @@ func Analyze(ctx context.Context, s Store, name string, opts ...Option) (*Result
 }
 
 func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 map[string]float64, machineNames map[string]string) (*Result, error) {
-	venueStats, err := s.GetSinglePlayerMachineStats(ctx, name, venue)
-	if err != nil {
-		return nil, fmt.Errorf("load player stats at venue: %w", err)
-	}
-
 	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
 		return nil, fmt.Errorf("load venue machines: %w", err)
@@ -122,34 +115,15 @@ func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 m
 
 	globalStats, err := s.GetSinglePlayerMachineStats(ctx, name, "")
 	if err != nil {
-		return nil, fmt.Errorf("load player global stats: %w", err)
+		return nil, fmt.Errorf("load player stats: %w", err)
 	}
 
-	// Filter venue stats to machines at the venue.
-	filtered := make([]db.PlayerMachineStats, 0, len(venueStats))
-	for _, s := range venueStats {
-		if venueMachines[s.MachineKey] {
-			filtered = append(filtered, s)
+	// Filter global stats to machines at the venue.
+	filtered := make([]db.PlayerMachineStats, 0, len(globalStats))
+	for _, gs := range globalStats {
+		if venueMachines[gs.MachineKey] {
+			filtered = append(filtered, gs)
 		}
-	}
-
-	venueDataSet := make(map[string]bool, len(filtered))
-	for _, s := range filtered {
-		venueDataSet[s.MachineKey] = true
-	}
-
-	// Filter global stats to machines at the venue, flagging missing venue data.
-	globalFiltered := make([]db.PlayerMachineStats, 0, len(globalStats))
-	for _, s := range globalStats {
-		if venueMachines[s.MachineKey] {
-			globalFiltered = append(globalFiltered, s)
-		}
-	}
-
-	global := make([]MachineStats, len(globalFiltered))
-	for i, gs := range globalFiltered {
-		global[i] = enrichStat(gs, leagueP50, machineNames)
-		global[i].NoVenueData = !venueDataSet[gs.MachineKey]
 	}
 
 	var team *Team
@@ -161,9 +135,8 @@ func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 m
 		Name:        name,
 		Venue:       venue,
 		Team:        team,
-		VenueStats:  enrichStats(filtered, leagueP50, machineNames),
-		GlobalStats: global,
-		Analysis:    analyze(globalStats, leagueP50, machineNames),
+		GlobalStats: enrichStats(filtered, leagueP50, machineNames),
+		Analysis:    analyze(filtered, leagueP50, machineNames),
 	}, nil
 }
 

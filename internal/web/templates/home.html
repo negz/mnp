@@ -1,0 +1,36 @@
+{{define "title"}}MNP - Schedule{{end}}
+
+{{define "content"}}
+{{if .Weeks}}
+<div class="schedule-header">
+  <h2>Schedule</h2>
+  <select onchange="window.location='/?week='+this.value">
+    {{range .Weeks}}
+    <option value="{{.Week}}"{{if eq .Week $.CurrentWeek}} selected{{end}}>Week {{.Week}} · {{.Date}}</option>
+    {{end}}
+  </select>
+</div>
+
+{{range .Weeks}}{{if eq .Week $.CurrentWeek}}
+<table class="striped schedule">
+  <thead>
+    <tr>
+      <th>Match</th>
+      <th>Venue</th>
+    </tr>
+  </thead>
+  <tbody>
+    {{range .Matches}}
+    <tr>
+      <td class="td-team"><a href="/matchup?venue={{.VenueKey}}&t1={{.HomeTeamKey}}&t2={{.AwayTeamKey}}">{{.AwayTeam}} @ {{.HomeTeam}}</a></td>
+      <td class="td-venue">{{.Venue}}</td>
+    </tr>
+    {{end}}
+  </tbody>
+</table>
+{{end}}{{end}}
+{{else}}
+<h2>Schedule</h2>
+<p>No upcoming matches.</p>
+{{end}}
+{{end}}

@@ -141,7 +141,7 @@ func TestAnalyze(t *testing.T) {
 			},
 		},
 		"AtVenue": {
-			reason: "With a venue option, global stats should be filtered to venue machines and NoVenueData should be set for machines missing venue-specific data.",
+			reason: "With a venue option, global stats should be filtered to venue machines.",
 			args: args{
 				store: &MockStore{
 					MockGetLeagueP50: func(_ context.Context) (map[string]float64, error) {
@@ -153,15 +153,11 @@ func TestAnalyze(t *testing.T) {
 					MockGetVenueMachines: func(_ context.Context, _ string) (map[string]bool, error) {
 						return map[string]bool{"TAF": true, "MM": true}, nil
 					},
-					MockGetSinglePlayerMachineStats: func(_ context.Context, _, venueKey string) ([]db.PlayerMachineStats, error) {
-						if venueKey != "" {
-							return []db.PlayerMachineStats{
-								{MachineKey: "TAF", Games: 3, P50Score: 45_000_000},
-							}, nil
-						}
+					MockGetSinglePlayerMachineStats: func(_ context.Context, _, _ string) ([]db.PlayerMachineStats, error) {
 						return []db.PlayerMachineStats{
 							{MachineKey: "TAF", Games: 10, P50Score: 50_000_000},
 							{MachineKey: "MM", Games: 8, P50Score: 20_000_000},
+							{MachineKey: "TZ", Games: 5, P50Score: 20_000_000},
 						}, nil
 					},
 					MockGetPlayerTeam: func(_ context.Context, _ string) (db.PlayerTeam, error) {
@@ -176,12 +172,9 @@ func TestAnalyze(t *testing.T) {
 					Name:  "Alice",
 					Venue: "SAM",
 					Team:  &Team{Key: "CRA", Name: "Castle Crashers"},
-					VenueStats: []MachineStats{
-						{MachineKey: "TAF", MachineName: "The Addams Family", Games: 3, P50Score: 45_000_000, LeagueP50: 30_000_000},
-					},
 					GlobalStats: []MachineStats{
 						{MachineKey: "TAF", MachineName: "The Addams Family", Games: 10, P50Score: 50_000_000, LeagueP50: 30_000_000},
-						{MachineKey: "MM", MachineName: "Medieval Madness", Games: 8, P50Score: 20_000_000, LeagueP50: 15_000_000, NoVenueData: true},
+						{MachineKey: "MM", MachineName: "Medieval Madness", Games: 8, P50Score: 20_000_000, LeagueP50: 15_000_000},
 					},
 					Analysis: Analysis{
 						Strongest: []string{"The Addams Family", "Medieval Madness"},
