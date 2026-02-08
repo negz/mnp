@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/output"
 )
 
 const minGamesForAnalysis = 3
@@ -157,7 +158,7 @@ func enrichStats(stats []db.TeamMachineStats, leagueP50 map[string]float64, name
 func enrichStat(s db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) MachineStats {
 	ms := MachineStats{
 		MachineKey:  s.MachineKey,
-		MachineName: machineName(names, s.MachineKey),
+		MachineName: output.MachineName(names, s.MachineKey),
 		Games:       s.Games,
 		P50Score:    s.P50Score,
 		P90Score:    s.P90Score,
@@ -173,13 +174,6 @@ func enrichStat(s db.TeamMachineStats, leagueP50 map[string]float64, names map[s
 	return ms
 }
 
-func machineName(names map[string]string, key string) string {
-	if n, ok := names[key]; ok {
-		return n
-	}
-	return key
-}
-
 // analyze computes strongest/weakest machines by relative strength.
 func analyze(stats []db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) Analysis {
 	sorted := make([]db.TeamMachineStats, 0, len(stats))
@@ -190,26 +184,19 @@ func analyze(stats []db.TeamMachineStats, leagueP50 map[string]float64, names ma
 	}
 
 	slices.SortFunc(sorted, func(a, b db.TeamMachineStats) int {
-		aRel := relStr(a.P50Score, leagueP50[a.MachineKey])
-		bRel := relStr(b.P50Score, leagueP50[b.MachineKey])
+		aRel := output.RelStr(a.P50Score, leagueP50[a.MachineKey])
+		bRel := output.RelStr(b.P50Score, leagueP50[b.MachineKey])
 		return cmp.Compare(bRel, aRel)
 	})
 
 	var a Analysis
 	for i := range min(3, len(sorted)) {
-		a.Strongest = append(a.Strongest, machineName(names, sorted[i].MachineKey))
+		a.Strongest = append(a.Strongest, output.MachineName(names, sorted[i].MachineKey))
 	}
 	if len(sorted) > 3 {
 		for i := len(sorted) - 1; i >= max(0, len(sorted)-3); i-- {
-			a.Weakest = append(a.Weakest, machineName(names, sorted[i].MachineKey))
+			a.Weakest = append(a.Weakest, output.MachineName(names, sorted[i].MachineKey))
 		}
 	}
 	return a
-}
-
-func relStr(p50, leagueP50 float64) float64 {
-	if leagueP50 == 0 {
-		return 0
-	}
-	return (p50 - leagueP50) / leagueP50 * 100
 }

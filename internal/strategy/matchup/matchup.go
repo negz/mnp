@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/output"
 )
 
 // Store is the set of queries needed for matchup comparison.
@@ -106,7 +107,7 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 		l2 := likelyScore(s2.LikelyPlayers)
 
 		machines = append(machines, MachineMatchup{
-			MachineName: machineName(names, s1.MachineKey),
+			MachineName: output.MachineName(names, s1.MachineKey),
 			Team1P50:    s1.P50Score,
 			Team1Likely: l1,
 			Team2P50:    s2.P50Score,
@@ -124,7 +125,7 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 
 		l2 := likelyScore(s2.LikelyPlayers)
 		machines = append(machines, MachineMatchup{
-			MachineName: machineName(names, key),
+			MachineName: output.MachineName(names, key),
 			Team2P50:    s2.P50Score,
 			Team2Likely: l2,
 			Edge:        edgePct(0, l2),
@@ -206,11 +207,4 @@ func confidence(players1, players2 []db.LikelyPlayer) Confidence {
 	default:
 		return ConfidenceLow
 	}
-}
-
-func machineName(names map[string]string, key string) string {
-	if n, ok := names[key]; ok {
-		return n
-	}
-	return key
 }
