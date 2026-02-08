@@ -17,10 +17,12 @@ import (
 	"github.com/negz/mnp/cmd/mnp/teams"
 	"github.com/negz/mnp/cmd/mnp/venues"
 	"github.com/negz/mnp/internal/cache"
+	"github.com/negz/mnp/internal/version"
 )
 
 type cli struct {
-	Verbose bool `help:"Print sync progress." short:"v"`
+	Version kong.VersionFlag `help:"Print version."       short:"V"`
+	Verbose bool             `help:"Print sync progress." short:"v"`
 
 	Recommend recommend.Command `cmd:"" help:"Recommend players for a machine."`
 	Scout     scout.Command     `cmd:"" help:"Scout a team's strengths and weaknesses."`
@@ -41,6 +43,7 @@ func main() {
 		kong.Name("mnp"),
 		kong.Description("Monday Night Pinball data tools."),
 		kong.UsageOnError(),
+		kong.Vars{"version": version.Version},
 	)
 
 	defer c.Cache.Close() //nolint:errcheck // Not much we can do about this.
