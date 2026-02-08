@@ -233,6 +233,9 @@ func (c *Client) pull(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("get worktree: %w", err)
 		}
+		if err := w.Reset(&git.ResetOptions{Mode: git.HardReset}); err != nil {
+			return fmt.Errorf("reset worktree: %w", err)
+		}
 		if err := w.PullContext(ctx, &git.PullOptions{Progress: progress}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 			return err
 		}
