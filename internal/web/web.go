@@ -21,6 +21,7 @@ import (
 	"github.com/negz/mnp/internal/strategy/player"
 	"github.com/negz/mnp/internal/strategy/recommend"
 	"github.com/negz/mnp/internal/strategy/scout"
+	"github.com/negz/mnp/internal/version"
 )
 
 //go:embed static
@@ -160,6 +161,7 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 
 func newTemplateFuncs() template.FuncMap {
 	return template.FuncMap{
+		"version": func() string { return version.Version },
 		"formatScore": func(score float64) string {
 			if score == 0 {
 				return "-"

@@ -1,0 +1,195 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - release-*
+  pull_request: {}
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. v0.1.0)"
+        required: true
+        type: string
+
+env:
+  GO_VERSION: "1.25"
+  GOLANGCI_LINT_VERSION: "v2.4"
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ -n "${{ inputs.version }}" ]]; then
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          else
+            TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+            SHORT_SHA=$(git rev-parse --short HEAD)
+            echo "version=v0.0.0-${TIMESTAMP}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Test
+        run: go test -race -count=1 ./...
+
+  build:
+    needs: [detect, lint, test]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          EXT=""
+          if [[ "${{ matrix.goos }}" == "windows" ]]; then
+            EXT=".exe"
+          fi
+          BINARY="mnp-${{ matrix.goos }}-${{ matrix.goarch }}${EXT}"
+          go build -trimpath -ldflags="-s -w -X github.com/negz/mnp/internal/version.Version=${VERSION}" -o "${BINARY}" ./cmd/mnp
+          echo "binary=${BINARY}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: mnp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: mnp-*
+
+  image:
+    needs: [detect, lint, test, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download Linux binaries
+        uses: actions/download-artifact@v7
+        with:
+          pattern: mnp-linux-*
+          merge-multiple: true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=${{ needs.detect.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.detect.outputs.release == 'true' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  release:
+    needs: [detect, build, image]
+    if: needs.detect.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: mnp-*
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ needs.detect.outputs.version }}"
+          gh release create "${VERSION}" \
+            --title "${VERSION}" \
+            --generate-notes \
+            artifacts/*
