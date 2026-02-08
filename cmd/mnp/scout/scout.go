@@ -2,19 +2,19 @@
 package scout
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 
 	"github.com/negz/mnp/internal/cache"
-	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/output"
+	"github.com/negz/mnp/internal/strategy/scout"
 )
 
-const minGamesForAnalysis = 3
+func headers() []string {
+	return []string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"}
+}
 
 // Command scouts a team's strengths and weaknesses across machines.
 type Command struct {
@@ -30,125 +30,61 @@ func (c *Command) Run(d *cache.DB) error {
 		return err
 	}
 
-	leagueP50, err := store.GetLeagueP50(ctx)
-	if err != nil {
-		return err
-	}
-
-	names, err := store.GetMachineNames(ctx)
-	if err != nil {
-		return err
-	}
-
+	var opts []scout.Option
 	if c.Venue != "" {
-		return c.runWithVenue(ctx, store, leagueP50, names)
+		opts = append(opts, scout.AtVenue(c.Venue))
 	}
 
-	stats, err := store.GetTeamMachineStats(ctx, c.Team, "")
+	r, err := scout.Scout(ctx, store, c.Team, opts...)
 	if err != nil {
 		return err
 	}
 
-	if len(stats) == 0 {
+	if len(r.VenueStats) == 0 && len(r.GlobalStats) == 0 {
 		fmt.Printf("No data for %s\n", c.Team)
 		return nil
 	}
 
-	if err := output.Table(os.Stdout,
-		[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
-		statsToRows(stats, leagueP50, names),
-	); err != nil {
-		return err
-	}
-
-	printAnalysis(stats, leagueP50, names)
-	return nil
-}
-
-// runWithVenue shows venue-specific stats with global fallback.
-func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagueP50 map[string]float64, names map[string]string) error {
-	venueMachines, err := store.GetVenueMachines(ctx, c.Venue)
-	if err != nil {
-		return err
-	}
-
-	venueStats, err := store.GetTeamMachineStats(ctx, c.Team, c.Venue)
-	if err != nil {
-		return err
-	}
-
-	globalStats, err := store.GetTeamMachineStats(ctx, c.Team, "")
-	if err != nil {
-		return err
-	}
-
-	if len(venueStats) == 0 && len(globalStats) == 0 {
-		fmt.Printf("No data for %s\n", c.Team)
-		return nil
-	}
-
-	if len(venueStats) > 0 {
-		fmt.Printf("At %s:\n\n", c.Venue)
-		if err := output.Table(os.Stdout,
-			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
-			statsToRows(venueStats, leagueP50, names),
-		); err != nil {
+	if r.Venue != "" && len(r.VenueStats) > 0 {
+		fmt.Printf("At %s:\n\n", r.Venue)
+		if err := output.Table(os.Stdout, headers(), statsToRows(r.VenueStats)); err != nil {
 			return err
 		}
 		fmt.Println()
 	}
 
-	venueDataSet := make(map[string]bool)
-	for _, s := range venueStats {
-		venueDataSet[s.MachineKey] = true
-	}
-
-	rows := make([][]string, 0, len(venueMachines))
-	hasGlobalOnly := false
-	for _, gs := range globalStats {
-		if !venueMachines[gs.MachineKey] {
-			continue
+	if len(r.GlobalStats) > 0 {
+		if r.Venue != "" {
+			fmt.Println("Global (for context):")
+			fmt.Println()
 		}
-		name := output.MachineName(names, gs.MachineKey)
-		if !venueDataSet[gs.MachineKey] {
-			name += "*"
-			hasGlobalOnly = true
-		}
-		rows = append(rows, []string{
-			name,
-			fmt.Sprintf("%d", gs.Games),
-			output.FormatP50(gs.P50Score, leagueP50[gs.MachineKey]),
-			output.FormatScore(gs.P90Score),
-			formatLikelyPlayers(gs.LikelyPlayers),
-		})
-	}
-
-	if len(rows) > 0 {
-		fmt.Println("Global (for context):")
-		fmt.Println()
-		if err := output.Table(os.Stdout,
-			[]string{"Machine", "Games", "P50 (vs Avg)", "P90", "Likely Players"},
-			rows,
-		); err != nil {
+		if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
 			return err
 		}
-		if hasGlobalOnly {
-			fmt.Printf("*No %s data\n", c.Venue)
+
+		for _, s := range r.GlobalStats {
+			if s.NoVenueData {
+				fmt.Printf("*No %s data\n", r.Venue)
+				break
+			}
 		}
 	}
 
-	printAnalysis(venueStats, leagueP50, names)
+	printAnalysis(r.Analysis)
 	return nil
 }
 
-// statsToRows converts TeamMachineStats to table rows.
-func statsToRows(stats []db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) [][]string {
+func statsToRows(stats []scout.MachineStats) [][]string {
 	rows := make([][]string, len(stats))
 	for i, s := range stats {
+		name := s.MachineName
+		if s.NoVenueData {
+			name += "*"
+		}
 		rows[i] = []string{
-			output.MachineName(names, s.MachineKey),
+			name,
 			fmt.Sprintf("%d", s.Games),
-			output.FormatP50(s.P50Score, leagueP50[s.MachineKey]),
+			output.FormatP50(s.P50Score, s.LeagueP50),
 			output.FormatScore(s.P90Score),
 			formatLikelyPlayers(s.LikelyPlayers),
 		}
@@ -156,8 +92,7 @@ func statsToRows(stats []db.TeamMachineStats, leagueP50 map[string]float64, name
 	return rows
 }
 
-// formatLikelyPlayers formats likely players as "Alice D (35M), Bob S (28M)".
-func formatLikelyPlayers(players []db.LikelyPlayer) string {
+func formatLikelyPlayers(players []scout.LikelyPlayer) string {
 	parts := make([]string, len(players))
 	for i, p := range players {
 		short := p.Name
@@ -169,42 +104,14 @@ func formatLikelyPlayers(players []db.LikelyPlayer) string {
 	return strings.Join(parts, ", ")
 }
 
-// printAnalysis prints a summary of strongest and weakest machines by relative
-// strength (% above/below league P50).
-func printAnalysis(stats []db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) {
-	if len(stats) == 0 {
-		return
-	}
-
-	sorted := make([]db.TeamMachineStats, 0, len(stats))
-	for _, s := range stats {
-		if s.Games >= minGamesForAnalysis {
-			sorted = append(sorted, s)
-		}
-	}
-	slices.SortFunc(sorted, func(a, b db.TeamMachineStats) int {
-		aRel := output.RelStr(a.P50Score, leagueP50[a.MachineKey])
-		bRel := output.RelStr(b.P50Score, leagueP50[b.MachineKey])
-		return cmp.Compare(bRel, aRel)
-	})
-
-	if len(sorted) == 0 {
+func printAnalysis(a scout.Analysis) {
+	if len(a.Strongest) == 0 {
 		return
 	}
 
 	fmt.Println()
-
-	strong := make([]string, 0, 3)
-	for i := range min(3, len(sorted)) {
-		strong = append(strong, output.MachineName(names, sorted[i].MachineKey))
-	}
-	fmt.Printf("Strongest: %s\n", strings.Join(strong, ", "))
-
-	if len(sorted) > 3 {
-		weak := make([]string, 0, 3)
-		for i := len(sorted) - 1; i >= max(0, len(sorted)-3); i-- {
-			weak = append(weak, output.MachineName(names, sorted[i].MachineKey))
-		}
-		fmt.Printf("Weakest:   %s\n", strings.Join(weak, ", "))
+	fmt.Printf("Strongest: %s\n", strings.Join(a.Strongest, ", "))
+	if len(a.Weakest) > 0 {
+		fmt.Printf("Weakest:   %s\n", strings.Join(a.Weakest, ", "))
 	}
 }
