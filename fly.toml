@@ -1,5 +1,5 @@
 app = 'mnp'
-primary_region = 'sea'
+primary_region = 'sjc'
 
 [http_service]
   internal_port = 8080
