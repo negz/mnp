@@ -7,12 +7,11 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/negz/mnp/cmd/mnp/db"
 	"github.com/negz/mnp/cmd/mnp/machines"
 	"github.com/negz/mnp/cmd/mnp/matchup"
 	"github.com/negz/mnp/cmd/mnp/player"
-	"github.com/negz/mnp/cmd/mnp/query"
 	"github.com/negz/mnp/cmd/mnp/recommend"
-	"github.com/negz/mnp/cmd/mnp/schema"
 	"github.com/negz/mnp/cmd/mnp/scout"
 	"github.com/negz/mnp/cmd/mnp/teams"
 	"github.com/negz/mnp/cmd/mnp/venues"
@@ -29,14 +28,9 @@ type cli struct {
 	Teams     teams.Command     `cmd:"" help:"List all teams."`
 	Venues    venues.Command    `cmd:"" help:"List all venues."`
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
-	DB        dbCmd             `cmd:"" help:"Database utilities."`
+	DB        db.Command        `cmd:"" help:"Database utilities."`
 
 	Cache cache.DB `embed:""`
-}
-
-type dbCmd struct {
-	Query  query.Command  `cmd:"" help:"Run a SQL query against the database."`
-	Schema schema.Command `cmd:"" help:"Print the database schema."`
 }
 
 func main() {
