@@ -77,31 +77,27 @@ func VsOpponent(key string) Option {
 }
 
 // Recommend returns player recommendations for a team on a machine.
-func Recommend(ctx context.Context, store Store, team, machine string, opts ...Option) (*Result, error) {
+func Recommend(ctx context.Context, s Store, team, machine string, opts ...Option) (*Result, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
 	}
 
-	leagueP50, err := store.GetLeagueP50(ctx)
+	leagueP50, err := s.GetLeagueP50(ctx)
 	if err != nil {
 		return nil, err
 	}
 	lp50 := leagueP50[machine]
 
 	if o.opponent != "" {
-		return recommendVsOpponent(ctx, store, team, machine, o.venue, o.opponent, lp50)
+		return recommendVsOpponent(ctx, s, team, machine, o.venue, o.opponent, lp50)
 	}
 
 	if o.venue != "" {
-		return recommendAtVenue(ctx, store, team, machine, o.venue, lp50)
+		return recommendAtVenue(ctx, s, team, machine, o.venue, lp50)
 	}
 
-	return recommendBasic(ctx, store, team, machine, lp50)
-}
-
-func recommendBasic(ctx context.Context, store Store, team, machine string, lp50 float64) (*Result, error) {
-	stats, err := store.GetPlayerMachineStats(ctx, team, machine, "")
+	stats, err := s.GetPlayerMachineStats(ctx, team, machine, "")
 	if err != nil {
 		return nil, err
 	}
@@ -113,13 +109,13 @@ func recommendBasic(ctx context.Context, store Store, team, machine string, lp50
 	}, nil
 }
 
-func recommendAtVenue(ctx context.Context, store Store, team, machine, venue string, lp50 float64) (*Result, error) {
-	venueStats, err := store.GetPlayerMachineStats(ctx, team, machine, venue)
+func recommendAtVenue(ctx context.Context, s Store, team, machine, venue string, lp50 float64) (*Result, error) {
+	venueStats, err := s.GetPlayerMachineStats(ctx, team, machine, venue)
 	if err != nil {
 		return nil, err
 	}
 
-	globalStats, err := store.GetPlayerMachineStats(ctx, team, machine, "")
+	globalStats, err := s.GetPlayerMachineStats(ctx, team, machine, "")
 	if err != nil {
 		return nil, err
 	}
@@ -143,13 +139,13 @@ func recommendAtVenue(ctx context.Context, store Store, team, machine, venue str
 	}, nil
 }
 
-func recommendVsOpponent(ctx context.Context, store Store, team, machine, venue, opponent string, lp50 float64) (*Result, error) {
-	ourStats, err := store.GetPlayerMachineStats(ctx, team, machine, venue)
+func recommendVsOpponent(ctx context.Context, s Store, team, machine, venue, opponent string, lp50 float64) (*Result, error) {
+	ourStats, err := s.GetPlayerMachineStats(ctx, team, machine, venue)
 	if err != nil {
 		return nil, err
 	}
 
-	theirStats, err := store.GetPlayerMachineStats(ctx, opponent, machine, venue)
+	theirStats, err := s.GetPlayerMachineStats(ctx, opponent, machine, venue)
 	if err != nil {
 		return nil, err
 	}

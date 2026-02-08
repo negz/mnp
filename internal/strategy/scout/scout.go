@@ -69,31 +69,27 @@ func AtVenue(key string) Option {
 }
 
 // Scout returns a team's strengths and weaknesses across machines.
-func Scout(ctx context.Context, store Store, team string, opts ...Option) (*Result, error) {
+func Scout(ctx context.Context, s Store, team string, opts ...Option) (*Result, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
 	}
 
-	leagueP50, err := store.GetLeagueP50(ctx)
+	leagueP50, err := s.GetLeagueP50(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	names, err := store.GetMachineNames(ctx)
+	names, err := s.GetMachineNames(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	if o.venue != "" {
-		return scoutVenue(ctx, store, team, o.venue, leagueP50, names)
+		return scoutVenue(ctx, s, team, o.venue, leagueP50, names)
 	}
 
-	return scoutGlobal(ctx, store, team, leagueP50, names)
-}
-
-func scoutGlobal(ctx context.Context, store Store, team string, leagueP50 map[string]float64, names map[string]string) (*Result, error) {
-	stats, err := store.GetTeamMachineStats(ctx, team, "")
+	stats, err := s.GetTeamMachineStats(ctx, team, "")
 	if err != nil {
 		return nil, err
 	}
@@ -105,18 +101,18 @@ func scoutGlobal(ctx context.Context, store Store, team string, leagueP50 map[st
 	}, nil
 }
 
-func scoutVenue(ctx context.Context, store Store, team, venue string, leagueP50 map[string]float64, names map[string]string) (*Result, error) {
-	venueMachines, err := store.GetVenueMachines(ctx, venue)
+func scoutVenue(ctx context.Context, s Store, team, venue string, leagueP50 map[string]float64, names map[string]string) (*Result, error) {
+	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
 		return nil, err
 	}
 
-	venueStats, err := store.GetTeamMachineStats(ctx, team, venue)
+	venueStats, err := s.GetTeamMachineStats(ctx, team, venue)
 	if err != nil {
 		return nil, err
 	}
 
-	globalStats, err := store.GetTeamMachineStats(ctx, team, "")
+	globalStats, err := s.GetTeamMachineStats(ctx, team, "")
 	if err != nil {
 		return nil, err
 	}

@@ -68,23 +68,23 @@ type Option func(*Options)
 type Options struct{}
 
 // Matchup compares two teams head-to-head at a venue.
-func Matchup(ctx context.Context, store Store, venue, team1, team2 string, _ ...Option) (*Result, error) {
-	venueMachines, err := store.GetVenueMachines(ctx, venue)
+func Matchup(ctx context.Context, s Store, venue, team1, team2 string, _ ...Option) (*Result, error) {
+	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
 		return nil, err
 	}
 
-	names, err := store.GetMachineNames(ctx)
+	names, err := s.GetMachineNames(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	stats1, err := store.GetTeamMachineStats(ctx, team1, "")
+	stats1, err := s.GetTeamMachineStats(ctx, team1, "")
 	if err != nil {
 		return nil, err
 	}
 
-	stats2, err := store.GetTeamMachineStats(ctx, team2, "")
+	stats2, err := s.GetTeamMachineStats(ctx, team2, "")
 	if err != nil {
 		return nil, err
 	}
@@ -185,9 +185,18 @@ func edgePct(l1, l2 float64) float64 {
 }
 
 func confidence(players1, players2 []db.LikelyPlayer) Confidence {
-	avg1 := avgGames(players1)
-	avg2 := avgGames(players2)
-	minAvg := min(avg1, avg2)
+	avg := func(players []db.LikelyPlayer) float64 {
+		if len(players) == 0 {
+			return 0
+		}
+		var total int
+		for _, p := range players {
+			total += p.Games
+		}
+		return float64(total) / float64(len(players))
+	}
+
+	minAvg := min(avg(players1), avg(players2))
 	switch {
 	case minAvg >= 10:
 		return ConfidenceHigh
@@ -196,17 +205,6 @@ func confidence(players1, players2 []db.LikelyPlayer) Confidence {
 	default:
 		return ConfidenceLow
 	}
-}
-
-func avgGames(players []db.LikelyPlayer) float64 {
-	if len(players) == 0 {
-		return 0
-	}
-	var total int
-	for _, p := range players {
-		total += p.Games
-	}
-	return float64(total) / float64(len(players))
 }
 
 func machineName(names map[string]string, key string) string {
