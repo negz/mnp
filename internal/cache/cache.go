@@ -12,15 +12,15 @@ import (
 	"github.com/negz/mnp/internal/mnp"
 )
 
-// Dir returns the MNP cache directory, using XDG_CACHE_HOME if set.
+// Dir returns the MNP cache directory.
+//
+// It uses os.UserCacheDir, which respects XDG_CACHE_HOME on Linux, uses
+// ~/Library/Caches on macOS, and %LocalAppData% on Windows. If the user cache
+// directory can't be determined it falls back to the system temp directory.
 func Dir() string {
-	base := os.Getenv("XDG_CACHE_HOME")
-	if base == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return filepath.Join(os.TempDir(), "mnp")
-		}
-		base = filepath.Join(home, ".cache")
+	base, err := os.UserCacheDir()
+	if err != nil {
+		return filepath.Join(os.TempDir(), "mnp")
 	}
 	return filepath.Join(base, "mnp")
 }
