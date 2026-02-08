@@ -5,6 +5,7 @@ go 1.23.0
 require (
 	github.com/alecthomas/kong v1.6.0
 	github.com/go-git/go-git/v5 v5.16.4
+	github.com/google/go-cmp v0.7.0
 	github.com/olekukonko/tablewriter v1.1.3
 	modernc.org/sqlite v1.34.4
 )
