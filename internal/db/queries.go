@@ -165,3 +165,66 @@ func (s *SQLiteStore) GetTeamID(ctx context.Context, key string, seasonID int64)
 	}
 	return id, nil
 }
+
+// ScheduleMatch contains match schedule info with resolved team and venue
+// names for display.
+type ScheduleMatch struct {
+	Week        int
+	Date        string
+	HomeTeamKey string
+	HomeTeam    string
+	AwayTeamKey string
+	AwayTeam    string
+	VenueKey    string
+	Venue       string
+}
+
+// ListSchedule returns all matches on or after the given date, ordered by week
+// then date. The date should be an ISO 8601 date string (e.g. "2025-02-07").
+func (s *SQLiteStore) ListSchedule(ctx context.Context, after string) ([]ScheduleMatch, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT
+			m.week,
+			m.date,
+			ht.key,
+			ht.name,
+			at.key,
+			at.name,
+			COALESCE(v.key, ''),
+			COALESCE(v.name, '')
+		FROM matches m
+		JOIN teams ht ON ht.id = m.home_team_id
+		JOIN teams at ON at.id = m.away_team_id
+		LEFT JOIN venues v ON v.id = m.venue_id
+		WHERE m.date >= ?
+		ORDER BY m.week, m.date
+	`, after)
+	if err != nil {
+		return nil, fmt.Errorf("query schedule: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var result []ScheduleMatch
+	for rows.Next() {
+		var sm ScheduleMatch
+		if err := rows.Scan(
+			&sm.Week,
+			&sm.Date,
+			&sm.HomeTeamKey,
+			&sm.HomeTeam,
+			&sm.AwayTeamKey,
+			&sm.AwayTeam,
+			&sm.VenueKey,
+			&sm.Venue,
+		); err != nil {
+			return nil, fmt.Errorf("scan schedule match: %w", err)
+		}
+		result = append(result, sm)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate schedule: %w", err)
+	}
+
+	return result, nil
+}

@@ -15,6 +15,7 @@ type testFixture struct {
 	tttID    int64 // TTT (The Trailer Trashers)
 	knrID    int64 // KNR (Knight Riders)
 	matchID  int64
+	match2ID int64
 }
 
 // newTestStore returns an initialized in-memory SQLiteStore seeded with a
@@ -206,6 +207,20 @@ func newTestStore(t *testing.T) (*SQLiteStore, testFixture) {
 				t.Fatalf("InsertGameResult %s round %d: %v", r.player, g.round, err)
 			}
 		}
+	}
+
+	// Second match: KNR vs TTT, week 2 at GPA (no games — future match).
+	f.match2ID, err = s.UpsertMatch(ctx, Match{
+		Key:        "mnp-23-2-KNR-TTT",
+		SeasonID:   f.seasonID,
+		Week:       2,
+		Date:       "2024-01-22",
+		HomeTeamID: f.knrID,
+		AwayTeamID: f.tttID,
+		VenueID:    f.gpaID,
+	})
+	if err != nil {
+		t.Fatalf("UpsertMatch week 2: %v", err)
 	}
 
 	// Metadata.
@@ -687,5 +702,95 @@ func TestMaxSeasonNumber(t *testing.T) {
 
 	if diff := cmp.Diff(23, got); diff != "" {
 		t.Errorf("MaxSeasonNumber(): -want, +got:\n%s", diff)
+	}
+}
+
+func TestListSchedule(t *testing.T) {
+	// Fixture has two matches:
+	//   Week 1: 2024-01-15, TTT (home) vs KNR (away) at STN
+	//   Week 2: 2024-01-22, KNR (home) vs TTT (away) at GPA
+	cases := map[string]struct {
+		reason string
+		after  string
+		want   []ScheduleMatch
+	}{
+		"AllMatches": {
+			reason: "A date before both matches should return both, ordered by week.",
+			after:  "2024-01-01",
+			want: []ScheduleMatch{
+				{
+					Week:        1,
+					Date:        "2024-01-15",
+					HomeTeamKey: "TTT",
+					HomeTeam:    "The Trailer Trashers",
+					AwayTeamKey: "KNR",
+					AwayTeam:    "Knight Riders",
+					VenueKey:    "STN",
+					Venue:       "Seattle Tavern and Pool Hall",
+				},
+				{
+					Week:        2,
+					Date:        "2024-01-22",
+					HomeTeamKey: "KNR",
+					HomeTeam:    "Knight Riders",
+					AwayTeamKey: "TTT",
+					AwayTeam:    "The Trailer Trashers",
+					VenueKey:    "GPA",
+					Venue:       "Georgetown Pizza and Arcade",
+				},
+			},
+		},
+		"InclusiveDate": {
+			reason: "A date equal to a match's date should include that match.",
+			after:  "2024-01-22",
+			want: []ScheduleMatch{
+				{
+					Week:        2,
+					Date:        "2024-01-22",
+					HomeTeamKey: "KNR",
+					HomeTeam:    "Knight Riders",
+					AwayTeamKey: "TTT",
+					AwayTeam:    "The Trailer Trashers",
+					VenueKey:    "GPA",
+					Venue:       "Georgetown Pizza and Arcade",
+				},
+			},
+		},
+		"AfterBoth": {
+			reason: "A date after all matches should return nil.",
+			after:  "2024-02-01",
+			want:   nil,
+		},
+		"BetweenMatches": {
+			reason: "A date between the two matches should return only the later one.",
+			after:  "2024-01-16",
+			want: []ScheduleMatch{
+				{
+					Week:        2,
+					Date:        "2024-01-22",
+					HomeTeamKey: "KNR",
+					HomeTeam:    "Knight Riders",
+					AwayTeamKey: "TTT",
+					AwayTeam:    "The Trailer Trashers",
+					VenueKey:    "GPA",
+					Venue:       "Georgetown Pizza and Arcade",
+				},
+			},
+		},
+	}
+
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := s.ListSchedule(ctx, tc.after)
+			if err != nil {
+				t.Fatalf("ListSchedule: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("\n%s\nListSchedule(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
 	}
 }
