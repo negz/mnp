@@ -36,12 +36,12 @@ type LikelyPlayer struct {
 // Results are ordered by play count descending (most-played machines first).
 // Top 2 players per machine (by P50) are included.
 func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
-	stats, err := s.getTeamMachineAgg(ctx, teamKey, venueKey)
+	stats, err := s.GetTeamMachineAgg(ctx, teamKey, venueKey)
 	if err != nil {
 		return nil, err
 	}
 
-	topPlayers, err := s.getTopPlayers(ctx, teamKey, venueKey)
+	topPlayers, err := s.GetTopPlayers(ctx, teamKey, venueKey)
 	if err != nil {
 		return nil, err
 	}
@@ -53,9 +53,9 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 	return stats, nil
 }
 
-// getTeamMachineAgg returns per-machine aggregate stats (P50, P90) for a
+// GetTeamMachineAgg returns per-machine aggregate stats (P50, P90) for a
 // team's current roster.
-func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
+func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id
@@ -130,9 +130,9 @@ func (s *SQLiteStore) getTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	return stats, nil
 }
 
-// getTopPlayers returns the top 2 players by play count for each machine,
+// GetTopPlayers returns the top 2 players by play count for each machine,
 // keyed by machine key.
-func (s *SQLiteStore) getTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]LikelyPlayer, error) {
+func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]LikelyPlayer, error) {
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id

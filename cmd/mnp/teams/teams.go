@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/negz/mnp/internal/cache"
 	"github.com/negz/mnp/internal/output"
@@ -17,48 +16,22 @@ type Command struct {
 }
 
 // Run executes the teams command.
-func (c *Command) Run(db *cache.DB) error {
+func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
-	store, err := db.Store(ctx)
+	store, err := d.Store(ctx)
 	if err != nil {
 		return err
 	}
 
-	query := `
-		SELECT t.key, t.name, COALESCE(v.name || ' (' || v.key || ')', '') as venue
-		FROM teams t
-		LEFT JOIN venues v ON v.id = t.home_venue_id
-		WHERE t.season_id = (SELECT MAX(season_id) FROM teams)
-	`
-	var args []any
-
-	if c.Search != "" {
-		query += " AND (LOWER(t.key) LIKE ? OR LOWER(t.name) LIKE ?)"
-		pattern := "%" + strings.ToLower(c.Search) + "%"
-		args = append(args, pattern, pattern)
-	}
-
-	query += " ORDER BY t.key"
-
-	rows, err := store.DB().QueryContext(ctx, query, args...)
+	teams, err := store.ListTeams(ctx, c.Search)
 	if err != nil {
-		return fmt.Errorf("query teams: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // Read-only query.
-
-	var results [][]string
-	for rows.Next() {
-		var key, name, venue string
-		if err := rows.Scan(&key, &name, &venue); err != nil {
-			return fmt.Errorf("scan team: %w", err)
-		}
-		results = append(results, []string{key, name, venue})
+		return fmt.Errorf("list teams: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate teams: %w", err)
+	rows := make([][]string, len(teams))
+	for i, t := range teams {
+		rows[i] = []string{t.Key, t.Name, t.Venue}
 	}
 
-	return output.Table(os.Stdout, []string{"Key", "Name", "Venue"}, results)
+	return output.Table(os.Stdout, []string{"Key", "Name", "Venue"}, rows)
 }

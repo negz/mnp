@@ -25,7 +25,6 @@ type Command struct {
 // Run executes the scout command.
 func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
 	store, err := d.Store(ctx)
 	if err != nil {
 		return err
@@ -45,11 +44,6 @@ func (c *Command) Run(d *cache.DB) error {
 		return c.runWithVenue(ctx, store, leagueP50, names)
 	}
 
-	return c.runBasic(ctx, store, leagueP50, names)
-}
-
-// runBasic shows team performance across all machines (global stats only).
-func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, leagueP50 map[string]float64, names map[string]string) error {
 	stats, err := store.GetTeamMachineStats(ctx, c.Team, "")
 	if err != nil {
 		return err
@@ -115,7 +109,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 		if !venueMachines[gs.MachineKey] {
 			continue
 		}
-		name := machineName(names, gs.MachineKey)
+		name := output.MachineName(names, gs.MachineKey)
 		if !venueDataSet[gs.MachineKey] {
 			name += "*"
 			hasGlobalOnly = true
@@ -152,7 +146,7 @@ func statsToRows(stats []db.TeamMachineStats, leagueP50 map[string]float64, name
 	rows := make([][]string, len(stats))
 	for i, s := range stats {
 		rows[i] = []string{
-			machineName(names, s.MachineKey),
+			output.MachineName(names, s.MachineKey),
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, leagueP50[s.MachineKey]),
 			output.FormatScore(s.P90Score),
@@ -162,28 +156,17 @@ func statsToRows(stats []db.TeamMachineStats, leagueP50 map[string]float64, name
 	return rows
 }
 
-// formatLikelyPlayers formats likely players as "Alice (35M), Bob (28M)".
+// formatLikelyPlayers formats likely players as "Alice D (35M), Bob S (28M)".
 func formatLikelyPlayers(players []db.LikelyPlayer) string {
 	parts := make([]string, len(players))
 	for i, p := range players {
-		parts[i] = fmt.Sprintf("%s (%s)", shortName(p.Name), output.FormatScore(p.P50Score))
+		short := p.Name
+		if first, last, ok := strings.Cut(p.Name, " "); ok {
+			short = first + " " + last[:1]
+		}
+		parts[i] = fmt.Sprintf("%s (%s)", short, output.FormatScore(p.P50Score))
 	}
 	return strings.Join(parts, ", ")
-}
-
-func shortName(name string) string {
-	first, last, ok := strings.Cut(name, " ")
-	if !ok {
-		return name
-	}
-	return first + " " + last[:1]
-}
-
-func machineName(names map[string]string, key string) string {
-	if n, ok := names[key]; ok {
-		return n
-	}
-	return key
 }
 
 // printAnalysis prints a summary of strongest and weakest machines by relative
@@ -213,14 +196,14 @@ func printAnalysis(stats []db.TeamMachineStats, leagueP50 map[string]float64, na
 
 	strong := make([]string, 0, 3)
 	for i := range min(3, len(sorted)) {
-		strong = append(strong, machineName(names, sorted[i].MachineKey))
+		strong = append(strong, output.MachineName(names, sorted[i].MachineKey))
 	}
 	fmt.Printf("Strongest: %s\n", strings.Join(strong, ", "))
 
 	if len(sorted) > 3 {
 		weak := make([]string, 0, 3)
 		for i := len(sorted) - 1; i >= max(0, len(sorted)-3); i-- {
-			weak = append(weak, machineName(names, sorted[i].MachineKey))
+			weak = append(weak, output.MachineName(names, sorted[i].MachineKey))
 		}
 		fmt.Printf("Weakest:   %s\n", strings.Join(weak, ", "))
 	}

@@ -25,7 +25,6 @@ type Command struct {
 // Run executes the player command.
 func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
 	store, err := d.Store(ctx)
 	if err != nil {
 		return err
@@ -45,10 +44,6 @@ func (c *Command) Run(d *cache.DB) error {
 		return c.runWithVenue(ctx, store, leagueP50, names)
 	}
 
-	return c.runBasic(ctx, store, leagueP50, names)
-}
-
-func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, leagueP50 map[string]float64, names map[string]string) error {
 	stats, err := store.GetSinglePlayerMachineStats(ctx, c.Name, "")
 	if err != nil {
 		return err
@@ -121,7 +116,7 @@ func (c *Command) runWithVenue(ctx context.Context, store *db.SQLiteStore, leagu
 		if !venueMachines[s.MachineKey] {
 			continue
 		}
-		name := machineName(names, s.MachineKey)
+		name := output.MachineName(names, s.MachineKey)
 		if !venueDataSet[s.MachineKey] {
 			name += "*"
 			hasGlobalOnly = true
@@ -166,7 +161,11 @@ func (c *Command) printFooter(ctx context.Context, store *db.SQLiteStore, stats 
 			sorted = append(sorted, s)
 		}
 	}
-	sortByRelStr(sorted, leagueP50)
+	slices.SortFunc(sorted, func(a, b db.PlayerMachineStats) int {
+		aRel := output.RelStr(a.P50Score, leagueP50[a.MachineKey])
+		bRel := output.RelStr(b.P50Score, leagueP50[b.MachineKey])
+		return cmp.Compare(bRel, aRel)
+	})
 
 	if len(sorted) == 0 {
 		return
@@ -174,14 +173,14 @@ func (c *Command) printFooter(ctx context.Context, store *db.SQLiteStore, stats 
 
 	strong := make([]string, 0, 3)
 	for i := range min(3, len(sorted)) {
-		strong = append(strong, machineName(names, sorted[i].MachineKey))
+		strong = append(strong, output.MachineName(names, sorted[i].MachineKey))
 	}
 	fmt.Printf("Strongest: %s\n", strings.Join(strong, ", "))
 
 	if len(sorted) > 3 {
 		weak := make([]string, 0, 3)
 		for i := len(sorted) - 1; i >= max(0, len(sorted)-3); i-- {
-			weak = append(weak, machineName(names, sorted[i].MachineKey))
+			weak = append(weak, output.MachineName(names, sorted[i].MachineKey))
 		}
 		fmt.Printf("Weakest:   %s\n", strings.Join(weak, ", "))
 	}
@@ -191,26 +190,11 @@ func statsToRows(stats []db.PlayerMachineStats, leagueP50 map[string]float64, na
 	rows := make([][]string, len(stats))
 	for i, s := range stats {
 		rows[i] = []string{
-			machineName(names, s.MachineKey),
+			output.MachineName(names, s.MachineKey),
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, leagueP50[s.MachineKey]),
 			output.FormatScore(s.P90Score),
 		}
 	}
 	return rows
-}
-
-func sortByRelStr(stats []db.PlayerMachineStats, leagueP50 map[string]float64) {
-	slices.SortFunc(stats, func(a, b db.PlayerMachineStats) int {
-		aRel := output.RelStr(a.P50Score, leagueP50[a.MachineKey])
-		bRel := output.RelStr(b.P50Score, leagueP50[b.MachineKey])
-		return cmp.Compare(bRel, aRel)
-	})
-}
-
-func machineName(names map[string]string, key string) string {
-	if n, ok := names[key]; ok {
-		return n
-	}
-	return key
 }

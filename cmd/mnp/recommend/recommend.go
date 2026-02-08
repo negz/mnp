@@ -22,7 +22,6 @@ type Command struct {
 // Run executes the recommend command.
 func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
 	store, err := d.Store(ctx)
 	if err != nil {
 		return err
@@ -42,11 +41,6 @@ func (c *Command) Run(d *cache.DB) error {
 		return c.runWithVenue(ctx, store, lp50)
 	}
 
-	return c.runBasic(ctx, store, lp50)
-}
-
-// runBasic shows player stats for a team on a machine (global stats only).
-func (c *Command) runBasic(ctx context.Context, store *db.SQLiteStore, lp50 float64) error {
 	stats, err := store.GetPlayerMachineStats(ctx, c.Team, c.Machine, "")
 	if err != nil {
 		return err

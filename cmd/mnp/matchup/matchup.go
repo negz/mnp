@@ -25,7 +25,6 @@ type Command struct {
 // Run executes the matchup command.
 func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
 	store, err := d.Store(ctx)
 	if err != nil {
 		return err
@@ -74,7 +73,7 @@ func (c *Command) Run(d *cache.DB) error {
 		e := edgePct(l1, l2)
 		conf := confidence(s1.LikelyPlayers, s2.LikelyPlayers)
 		rows = append(rows, machineRow{
-			machine:  machineName(names, s1.MachineKey),
+			machine:  output.MachineName(names, s1.MachineKey),
 			p50t1:    output.FormatScore(s1.P50Score),
 			likelyt1: formatLikely(l1),
 			p50t2:    output.FormatScore(s2.P50Score),
@@ -94,7 +93,7 @@ func (c *Command) Run(d *cache.DB) error {
 
 		e := edgePct(0, l2)
 		rows = append(rows, machineRow{
-			machine:  machineName(names, key),
+			machine:  output.MachineName(names, key),
 			p50t1:    "-",
 			likelyt1: "-",
 			p50t2:    output.FormatScore(s2.P50Score),
@@ -135,13 +134,6 @@ func likelyScore(players []db.LikelyPlayer) float64 {
 		sum += p.P50Score
 	}
 	return sum / float64(len(players))
-}
-
-func machineName(names map[string]string, key string) string {
-	if n, ok := names[key]; ok {
-		return n
-	}
-	return key
 }
 
 func formatLikely(score float64) string {

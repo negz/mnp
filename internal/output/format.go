@@ -54,3 +54,12 @@ func RelStr(p50, leagueP50 float64) float64 {
 	}
 	return (p50 - leagueP50) / leagueP50 * 100
 }
+
+// MachineName returns the full name for a machine key, falling back to the key
+// itself if no name is found.
+func MachineName(names map[string]string, key string) string {
+	if n, ok := names[key]; ok {
+		return n
+	}
+	return key
+}

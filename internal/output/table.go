@@ -14,18 +14,15 @@ func Table(w io.Writer, headers []string, rows [][]string) error {
 		tablewriter.WithHeaderAutoFormat(tw.Off),
 		tablewriter.WithRowAutoWrap(tw.WrapNone),
 	)
-	t.Header(toAny(headers)...)
+
+	h := make([]any, len(headers))
+	for i, v := range headers {
+		h[i] = v
+	}
+	t.Header(h...)
+
 	if err := t.Bulk(rows); err != nil {
 		return err
 	}
 	return t.Render()
-}
-
-// toAny converts a string slice to an any slice for tablewriter.Header.
-func toAny(s []string) []any {
-	result := make([]any, len(s))
-	for i, v := range s {
-		result[i] = v
-	}
-	return result
 }

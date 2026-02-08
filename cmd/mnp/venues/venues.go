@@ -5,7 +5,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/negz/mnp/internal/cache"
 	"github.com/negz/mnp/internal/output"
@@ -17,43 +16,22 @@ type Command struct {
 }
 
 // Run executes the venues command.
-func (c *Command) Run(db *cache.DB) error {
+func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-
-	store, err := db.Store(ctx)
+	store, err := d.Store(ctx)
 	if err != nil {
 		return err
 	}
 
-	query := "SELECT key, name FROM venues WHERE 1=1"
-	var args []any
-
-	if c.Search != "" {
-		query += " AND (LOWER(key) LIKE ? OR LOWER(name) LIKE ?)"
-		pattern := "%" + strings.ToLower(c.Search) + "%"
-		args = append(args, pattern, pattern)
-	}
-
-	query += " ORDER BY key"
-
-	rows, err := store.DB().QueryContext(ctx, query, args...)
+	venues, err := store.ListVenues(ctx, c.Search)
 	if err != nil {
-		return fmt.Errorf("query venues: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // Read-only query.
-
-	var results [][]string
-	for rows.Next() {
-		var key, name string
-		if err := rows.Scan(&key, &name); err != nil {
-			return fmt.Errorf("scan venue: %w", err)
-		}
-		results = append(results, []string{key, name})
+		return fmt.Errorf("list venues: %w", err)
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate venues: %w", err)
+	rows := make([][]string, len(venues))
+	for i, v := range venues {
+		rows[i] = []string{v.Key, v.Name}
 	}
 
-	return output.Table(os.Stdout, []string{"Key", "Name"}, results)
+	return output.Table(os.Stdout, []string{"Key", "Name"}, rows)
 }

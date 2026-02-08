@@ -19,7 +19,6 @@ type Command struct {
 // Run executes the query command.
 func (c *Command) Run(db *cache.DB) error {
 	ctx := context.Background()
-
 	store, err := db.Store(ctx)
 	if err != nil {
 		return err

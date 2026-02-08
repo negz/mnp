@@ -3,7 +3,6 @@ package mnp
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,50 +24,6 @@ const (
 	RolePlayer = "P"
 )
 
-// Store is the interface for MNP data storage operations.
-//
-//nolint:interfacebloat // Cohesive domain interface; all methods needed for MNP data loading.
-type Store interface {
-	// UpsertMachine inserts or updates a machine.
-	UpsertMachine(ctx context.Context, m db.Machine) error
-
-	// UpsertVenue inserts or updates a venue and returns its ID.
-	UpsertVenue(ctx context.Context, key, name string) (int64, error)
-
-	// UpsertSeason inserts or updates a season and returns its ID.
-	UpsertSeason(ctx context.Context, number int) (int64, error)
-
-	// UpsertTeam inserts or updates a team and returns its ID.
-	UpsertTeam(ctx context.Context, t db.Team) (int64, error)
-
-	// UpsertPlayer inserts or updates a player and returns their ID.
-	UpsertPlayer(ctx context.Context, name string) (int64, error)
-
-	// UpsertRoster adds a player to a team roster.
-	UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error
-
-	// UpsertVenueMachine associates a machine with a venue.
-	UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error
-
-	// UpsertMatch inserts or updates a match and returns its ID.
-	UpsertMatch(ctx context.Context, m db.Match) (int64, error)
-
-	// DeleteMatchGames deletes all games and results for a match (for re-import).
-	DeleteMatchGames(ctx context.Context, matchID int64) error
-
-	// InsertGame inserts a game and returns its ID.
-	InsertGame(ctx context.Context, g db.Game) (int64, error)
-
-	// InsertGameResult inserts a game result.
-	InsertGameResult(ctx context.Context, r db.GameResult) error
-
-	// LoadedSeasons returns season numbers that have at least one match loaded.
-	LoadedSeasons(ctx context.Context) (map[int]bool, error)
-
-	// DB returns the underlying database for direct queries.
-	DB() *sql.DB
-}
-
 // ClientOption configures a Client.
 type ClientOption func(*Client)
 
@@ -87,7 +42,7 @@ func WithLogger(l *slog.Logger) ClientOption {
 }
 
 // WithStore sets the store for loading MNP data.
-func WithStore(s Store) ClientOption {
+func WithStore(s *db.SQLiteStore) ClientOption {
 	return func(c *Client) {
 		c.store = s
 	}
@@ -98,7 +53,7 @@ type Client struct {
 	archivePath string
 	repoURL     string
 	log         *slog.Logger
-	store       Store
+	store       *db.SQLiteStore
 }
 
 // NewClient creates a new MNP archive client.
@@ -117,27 +72,41 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 		return fmt.Errorf("no store configured")
 	}
 
-	// Git pull (fast when up-to-date)
 	if err := c.pull(ctx); err != nil {
 		return fmt.Errorf("sync MNP archive: %w", err)
 	}
 
-	// Determine which seasons need loading
-	seasons, err := c.seasonsToLoad(ctx, force)
+	loaded, err := c.store.LoadedSeasons(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("check loaded seasons: %w", err)
 	}
 
+	available, err := c.findSeasons()
+	if err != nil {
+		return fmt.Errorf("find seasons: %w", err)
+	}
+	if len(available) == 0 {
+		return nil
+	}
+
+	maxSeason := available[len(available)-1]
+	var seasons []int
+	for _, s := range available {
+		if force || !loaded[s] || s == maxSeason {
+			seasons = append(seasons, s)
+		}
+	}
 	if len(seasons) == 0 {
 		return nil
 	}
 
-	// Load global data first
-	if err := c.loadGlobals(ctx); err != nil {
-		return fmt.Errorf("load global data: %w", err)
+	if err := c.loadMachines(ctx); err != nil {
+		return fmt.Errorf("load machines: %w", err)
+	}
+	if err := c.loadVenues(ctx); err != nil {
+		return fmt.Errorf("load venues: %w", err)
 	}
 
-	// Load each season
 	for _, s := range seasons {
 		c.log.Info("Loading season", "season", s)
 		if err := c.loadSeason(ctx, s); err != nil {
@@ -146,31 +115,6 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 	}
 
 	return nil
-}
-
-// seasonsToLoad returns which seasons need to be loaded into the store.
-func (c *Client) seasonsToLoad(ctx context.Context, force bool) ([]int, error) {
-	loaded, err := c.store.LoadedSeasons(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("check loaded seasons: %w", err)
-	}
-
-	available, err := c.findSeasons()
-	if err != nil {
-		return nil, fmt.Errorf("find seasons: %w", err)
-	}
-	if len(available) == 0 {
-		return nil, nil // No seasons in archive yet
-	}
-
-	maxSeason := available[len(available)-1]
-	toLoad := make([]int, 0, len(available))
-	for _, s := range available {
-		if force || !loaded[s] || s == maxSeason {
-			toLoad = append(toLoad, s)
-		}
-	}
-	return toLoad, nil
 }
 
 // findSeasons returns available season numbers from the archive.
@@ -235,17 +179,6 @@ func (c *Client) pull(ctx context.Context) error {
 	return err
 }
 
-// loadGlobals loads machines.json and venues.json from the archive root.
-func (c *Client) loadGlobals(ctx context.Context) error {
-	if err := c.loadMachines(ctx); err != nil {
-		return fmt.Errorf("load machines: %w", err)
-	}
-	if err := c.loadVenues(ctx); err != nil {
-		return fmt.Errorf("load venues: %w", err)
-	}
-	return nil
-}
-
 func (c *Client) loadMachines(ctx context.Context) error {
 	f, err := os.Open(filepath.Join(c.archivePath, "machines.json"))
 	if err != nil {
@@ -289,22 +222,9 @@ func (c *Client) loadVenues(ctx context.Context) error {
 		return fmt.Errorf("decode venues.json: %w", err)
 	}
 
-	// Build set of known machines to skip venue machines that don't exist.
-	knownMachines := make(map[string]bool)
-	mrows, err := c.store.DB().QueryContext(ctx, "SELECT key FROM machines")
+	knownMachines, err := c.store.ListMachineKeys(ctx)
 	if err != nil {
-		return fmt.Errorf("query machines: %w", err)
-	}
-	defer mrows.Close() //nolint:errcheck // Read-only query.
-	for mrows.Next() {
-		var k string
-		if err := mrows.Scan(&k); err != nil {
-			return fmt.Errorf("scan machine key: %w", err)
-		}
-		knownMachines[k] = true
-	}
-	if err := mrows.Err(); err != nil {
-		return fmt.Errorf("iterate machines: %w", err)
+		return fmt.Errorf("list machine keys: %w", err)
 	}
 
 	for _, v := range venues {
@@ -497,6 +417,7 @@ func buildPlayerResults(g gameJSON, homeTeamID, awayTeamID int64, isDoubles bool
 	return results
 }
 
+//nolint:gocognit // Linear orchestration loop: parse JSON, resolve IDs, insert games/results.
 func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64) error {
 	f, err := os.Open(matchPath) //nolint:gosec // Internal archive path.
 	if err != nil {
@@ -529,11 +450,11 @@ func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64
 	}
 
 	// Get team IDs
-	homeTeamID, err := c.getTeamID(ctx, m.Home.Key, seasonID)
+	homeTeamID, err := c.store.GetTeamID(ctx, m.Home.Key, seasonID)
 	if err != nil {
 		return fmt.Errorf("get home team: %w", err)
 	}
-	awayTeamID, err := c.getTeamID(ctx, m.Away.Key, seasonID)
+	awayTeamID, err := c.store.GetTeamID(ctx, m.Away.Key, seasonID)
 	if err != nil {
 		return fmt.Errorf("get away team: %w", err)
 	}
@@ -552,16 +473,11 @@ func (c *Client) loadMatch(ctx context.Context, matchPath string, seasonID int64
 		return err
 	}
 
-	// Delete existing games for this match (for re-import)
 	if err := c.store.DeleteMatchGames(ctx, matchID); err != nil {
 		return err
 	}
 
-	return c.loadMatchGames(ctx, matchID, m.Rounds, homeTeamID, awayTeamID, playerNames)
-}
-
-func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []roundJSON, homeTeamID, awayTeamID int64, playerNames map[string]string) error {
-	for _, r := range rounds {
+	for _, r := range m.Rounds {
 		isDoubles := r.N == 1 || r.N == 4
 
 		for _, g := range r.Games {
@@ -579,50 +495,33 @@ func (c *Client) loadMatchGames(ctx context.Context, matchID int64, rounds []rou
 				return err
 			}
 
-			if err := c.insertGameResults(ctx, gameID, g, homeTeamID, awayTeamID, playerNames, isDoubles); err != nil {
-				return err
+			for _, p := range buildPlayerResults(g, homeTeamID, awayTeamID, isDoubles) {
+				if p.hash == "" {
+					continue
+				}
+
+				name, ok := playerNames[p.hash]
+				if !ok {
+					continue
+				}
+
+				playerID, err := c.store.UpsertPlayer(ctx, name)
+				if err != nil {
+					return err
+				}
+
+				if err := c.store.InsertGameResult(ctx, db.GameResult{
+					GameID:   gameID,
+					PlayerID: playerID,
+					TeamID:   p.teamID,
+					Position: p.pos,
+					Score:    p.score,
+				}); err != nil {
+					return err
+				}
 			}
 		}
 	}
+
 	return nil
-}
-
-func (c *Client) insertGameResults(ctx context.Context, gameID int64, g gameJSON, homeTeamID, awayTeamID int64, playerNames map[string]string, isDoubles bool) error {
-	for _, p := range buildPlayerResults(g, homeTeamID, awayTeamID, isDoubles) {
-		if p.hash == "" {
-			continue
-		}
-
-		name, ok := playerNames[p.hash]
-		if !ok {
-			continue // Unknown player
-		}
-
-		playerID, err := c.store.UpsertPlayer(ctx, name)
-		if err != nil {
-			return err
-		}
-
-		if err := c.store.InsertGameResult(ctx, db.GameResult{
-			GameID:   gameID,
-			PlayerID: playerID,
-			TeamID:   p.teamID,
-			Position: p.pos,
-			Score:    p.score,
-		}); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (c *Client) getTeamID(ctx context.Context, key string, seasonID int64) (int64, error) {
-	var id int64
-	err := c.store.DB().QueryRowContext(ctx,
-		"SELECT id FROM teams WHERE key = ? AND season_id = ?",
-		key, seasonID).Scan(&id)
-	if err != nil {
-		return 0, fmt.Errorf("team %s not found in season: %w", key, err)
-	}
-	return id, nil
 }
