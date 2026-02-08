@@ -68,8 +68,8 @@ type Option func(*Options)
 // Options holds optional parameters for a Matchup query.
 type Options struct{}
 
-// Matchup compares two teams head-to-head at a venue.
-func Matchup(ctx context.Context, s Store, venue, team1, team2 string, _ ...Option) (*Result, error) {
+// Analyze compares two teams head-to-head at a venue.
+func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Option) (*Result, error) {
 	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
 		return nil, fmt.Errorf("load venue machines: %w", err)

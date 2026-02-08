@@ -31,7 +31,7 @@ func (c *Command) Run(d *cache.DB) error {
 		opts = append(opts, player.AtVenue(c.Venue))
 	}
 
-	r, err := player.Player(ctx, store, c.Name, opts...)
+	r, err := player.Analyze(ctx, store, c.Name, opts...)
 	if err != nil {
 		return fmt.Errorf("look up %s: %w", c.Name, err)
 	}

@@ -28,7 +28,7 @@ func (c *Command) Run(d *cache.DB) error {
 		return fmt.Errorf("open database: %w", err)
 	}
 
-	r, err := matchup.Matchup(ctx, store, c.Venue, c.Team1, c.Team2)
+	r, err := matchup.Analyze(ctx, store, c.Venue, c.Team1, c.Team2)
 	if err != nil {
 		return fmt.Errorf("matchup %s vs %s: %w", c.Team1, c.Team2, err)
 	}

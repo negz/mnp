@@ -77,8 +77,8 @@ func VsOpponent(key string) Option {
 	}
 }
 
-// Recommend returns player recommendations for a team on a machine.
-func Recommend(ctx context.Context, s Store, team, machine string, opts ...Option) (*Result, error) {
+// Analyze returns player recommendations for a team on a machine.
+func Analyze(ctx context.Context, s Store, team, machine string, opts ...Option) (*Result, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)

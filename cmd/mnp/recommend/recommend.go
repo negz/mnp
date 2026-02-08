@@ -35,7 +35,7 @@ func (c *Command) Run(d *cache.DB) error {
 		opts = append(opts, recommend.VsOpponent(c.Opponent))
 	}
 
-	r, err := recommend.Recommend(ctx, store, c.Team, c.Machine, opts...)
+	r, err := recommend.Analyze(ctx, store, c.Team, c.Machine, opts...)
 	if err != nil {
 		return fmt.Errorf("recommend %s on %s: %w", c.Team, c.Machine, err)
 	}

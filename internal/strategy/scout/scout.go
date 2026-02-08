@@ -69,8 +69,8 @@ func AtVenue(key string) Option {
 	}
 }
 
-// Scout returns a team's strengths and weaknesses across machines.
-func Scout(ctx context.Context, s Store, team string, opts ...Option) (*Result, error) {
+// Analyze returns a team's strengths and weaknesses across machines.
+func Analyze(ctx context.Context, s Store, team string, opts ...Option) (*Result, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)

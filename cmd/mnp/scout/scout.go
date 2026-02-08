@@ -35,7 +35,7 @@ func (c *Command) Run(d *cache.DB) error {
 		opts = append(opts, scout.AtVenue(c.Venue))
 	}
 
-	r, err := scout.Scout(ctx, store, c.Team, opts...)
+	r, err := scout.Analyze(ctx, store, c.Team, opts...)
 	if err != nil {
 		return fmt.Errorf("scout %s: %w", c.Team, err)
 	}

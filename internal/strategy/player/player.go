@@ -69,8 +69,8 @@ func AtVenue(key string) Option {
 	}
 }
 
-// Player returns an individual player's stats across all machines.
-func Player(ctx context.Context, s Store, name string, opts ...Option) (*Result, error) {
+// Analyze returns an individual player's stats across all machines.
+func Analyze(ctx context.Context, s Store, name string, opts ...Option) (*Result, error) {
 	var o Options
 	for _, opt := range opts {
 		opt(&o)
