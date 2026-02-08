@@ -24,7 +24,7 @@ func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
 	store, err := d.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	var opts []recommend.Option
@@ -37,7 +37,7 @@ func (c *Command) Run(d *cache.DB) error {
 
 	r, err := recommend.Recommend(ctx, store, c.Team, c.Machine, opts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("recommend %s on %s: %w", c.Team, c.Machine, err)
 	}
 
 	if r.Opponent != "" {
@@ -69,7 +69,7 @@ func printVenue(r *recommend.Result) error {
 	if len(r.VenueStats) > 0 {
 		fmt.Printf("At %s:\n\n", r.Venue)
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.VenueStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 		fmt.Println()
 	}
@@ -77,7 +77,7 @@ func printVenue(r *recommend.Result) error {
 	fmt.Println("Global (for context):")
 	fmt.Println()
 	if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
-		return err
+		return fmt.Errorf("write table: %w", err)
 	}
 
 	for _, s := range r.GlobalStats {
@@ -99,7 +99,7 @@ func printOpponent(r *recommend.Result) error {
 	fmt.Printf("%s options:\n\n", r.Team)
 	if len(r.GlobalStats) > 0 {
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 	} else {
 		fmt.Println("(no data)")
@@ -108,7 +108,7 @@ func printOpponent(r *recommend.Result) error {
 	fmt.Printf("\n%s likely players:\n\n", r.Opponent)
 	if len(r.OpponentStats) > 0 {
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.OpponentStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 	} else {
 		fmt.Println("(no data)")

@@ -4,6 +4,7 @@ package player
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/negz/mnp/internal/db"
@@ -77,12 +78,12 @@ func Player(ctx context.Context, s Store, name string, opts ...Option) (*Result,
 
 	leagueP50, err := s.GetLeagueP50(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load league averages: %w", err)
 	}
 
 	names, err := s.GetMachineNames(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load machine names: %w", err)
 	}
 
 	if o.venue != "" {
@@ -91,7 +92,7 @@ func Player(ctx context.Context, s Store, name string, opts ...Option) (*Result,
 
 	stats, err := s.GetSinglePlayerMachineStats(ctx, name, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player stats: %w", err)
 	}
 
 	var team *Team
@@ -110,17 +111,17 @@ func Player(ctx context.Context, s Store, name string, opts ...Option) (*Result,
 func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 map[string]float64, machineNames map[string]string) (*Result, error) {
 	venueStats, err := s.GetSinglePlayerMachineStats(ctx, name, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player stats at venue: %w", err)
 	}
 
 	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load venue machines: %w", err)
 	}
 
 	globalStats, err := s.GetSinglePlayerMachineStats(ctx, name, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player global stats: %w", err)
 	}
 
 	// Filter venue stats to machines at the venue.

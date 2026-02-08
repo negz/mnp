@@ -20,7 +20,7 @@ func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
 	store, err := d.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	venues, err := store.ListVenues(ctx, c.Search)

@@ -21,7 +21,7 @@ func (c *Command) Run(db *cache.DB) error {
 	ctx := context.Background()
 	store, err := db.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	rows, err := store.DB().QueryContext(ctx, c.SQL)

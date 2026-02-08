@@ -4,6 +4,7 @@ package matchup
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"math"
 	"slices"
 
@@ -71,22 +72,22 @@ type Options struct{}
 func Matchup(ctx context.Context, s Store, venue, team1, team2 string, _ ...Option) (*Result, error) {
 	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load venue machines: %w", err)
 	}
 
 	names, err := s.GetMachineNames(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load machine names: %w", err)
 	}
 
 	stats1, err := s.GetTeamMachineStats(ctx, team1, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load stats for %s: %w", team1, err)
 	}
 
 	stats2, err := s.GetTeamMachineStats(ctx, team2, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load stats for %s: %w", team2, err)
 	}
 
 	stats2ByMachine := make(map[string]db.TeamMachineStats, len(stats2))

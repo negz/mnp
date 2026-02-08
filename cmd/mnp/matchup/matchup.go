@@ -25,12 +25,12 @@ func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
 	store, err := d.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	r, err := matchup.Matchup(ctx, store, c.Venue, c.Team1, c.Team2)
 	if err != nil {
-		return err
+		return fmt.Errorf("matchup %s vs %s: %w", c.Team1, c.Team2, err)
 	}
 
 	if len(r.Machines) == 0 {
@@ -54,7 +54,7 @@ func (c *Command) Run(d *cache.DB) error {
 		[]string{"Machine", r.Team1 + " P50", r.Team1 + " Likely", r.Team2 + " P50", r.Team2 + " Likely", "Edge"},
 		rows,
 	); err != nil {
-		return err
+		return fmt.Errorf("write table: %w", err)
 	}
 
 	printAnalysis(r)

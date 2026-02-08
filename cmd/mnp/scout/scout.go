@@ -27,7 +27,7 @@ func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
 	store, err := d.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	var opts []scout.Option
@@ -37,7 +37,7 @@ func (c *Command) Run(d *cache.DB) error {
 
 	r, err := scout.Scout(ctx, store, c.Team, opts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("scout %s: %w", c.Team, err)
 	}
 
 	if len(r.VenueStats) == 0 && len(r.GlobalStats) == 0 {
@@ -48,7 +48,7 @@ func (c *Command) Run(d *cache.DB) error {
 	if r.Venue != "" && len(r.VenueStats) > 0 {
 		fmt.Printf("At %s:\n\n", r.Venue)
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.VenueStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 		fmt.Println()
 	}
@@ -59,7 +59,7 @@ func (c *Command) Run(d *cache.DB) error {
 			fmt.Println()
 		}
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 
 		for _, s := range r.GlobalStats {

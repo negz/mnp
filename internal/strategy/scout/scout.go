@@ -4,6 +4,7 @@ package scout
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 
 	"github.com/negz/mnp/internal/db"
@@ -77,12 +78,12 @@ func Scout(ctx context.Context, s Store, team string, opts ...Option) (*Result, 
 
 	leagueP50, err := s.GetLeagueP50(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load league averages: %w", err)
 	}
 
 	names, err := s.GetMachineNames(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load machine names: %w", err)
 	}
 
 	if o.venue != "" {
@@ -91,7 +92,7 @@ func Scout(ctx context.Context, s Store, team string, opts ...Option) (*Result, 
 
 	stats, err := s.GetTeamMachineStats(ctx, team, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load team stats: %w", err)
 	}
 
 	return &Result{
@@ -104,17 +105,17 @@ func Scout(ctx context.Context, s Store, team string, opts ...Option) (*Result, 
 func scoutVenue(ctx context.Context, s Store, team, venue string, leagueP50 map[string]float64, names map[string]string) (*Result, error) {
 	venueMachines, err := s.GetVenueMachines(ctx, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load venue machines: %w", err)
 	}
 
 	venueStats, err := s.GetTeamMachineStats(ctx, team, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load team stats at venue: %w", err)
 	}
 
 	globalStats, err := s.GetTeamMachineStats(ctx, team, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load team global stats: %w", err)
 	}
 
 	venueDataSet := make(map[string]bool, len(venueStats))

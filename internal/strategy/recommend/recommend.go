@@ -3,6 +3,7 @@ package recommend
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/negz/mnp/internal/db"
 )
@@ -85,7 +86,7 @@ func Recommend(ctx context.Context, s Store, team, machine string, opts ...Optio
 
 	leagueP50, err := s.GetLeagueP50(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load league averages: %w", err)
 	}
 	lp50 := leagueP50[machine]
 
@@ -99,7 +100,7 @@ func Recommend(ctx context.Context, s Store, team, machine string, opts ...Optio
 
 	stats, err := s.GetPlayerMachineStats(ctx, team, machine, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player stats: %w", err)
 	}
 
 	return &Result{
@@ -112,12 +113,12 @@ func Recommend(ctx context.Context, s Store, team, machine string, opts ...Optio
 func recommendAtVenue(ctx context.Context, s Store, team, machine, venue string, lp50 float64) (*Result, error) {
 	venueStats, err := s.GetPlayerMachineStats(ctx, team, machine, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player stats at venue: %w", err)
 	}
 
 	globalStats, err := s.GetPlayerMachineStats(ctx, team, machine, "")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load player global stats: %w", err)
 	}
 
 	venuePlayerSet := make(map[string]bool, len(venueStats))
@@ -142,12 +143,12 @@ func recommendAtVenue(ctx context.Context, s Store, team, machine, venue string,
 func recommendVsOpponent(ctx context.Context, s Store, team, machine, venue, opponent string, lp50 float64) (*Result, error) {
 	ourStats, err := s.GetPlayerMachineStats(ctx, team, machine, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load stats for %s: %w", team, err)
 	}
 
 	theirStats, err := s.GetPlayerMachineStats(ctx, opponent, machine, venue)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load stats for %s: %w", opponent, err)
 	}
 
 	r := &Result{

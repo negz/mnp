@@ -23,7 +23,7 @@ func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
 	store, err := d.Store(ctx)
 	if err != nil {
-		return err
+		return fmt.Errorf("open database: %w", err)
 	}
 
 	var opts []player.Option
@@ -33,7 +33,7 @@ func (c *Command) Run(d *cache.DB) error {
 
 	r, err := player.Player(ctx, store, c.Name, opts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("look up %s: %w", c.Name, err)
 	}
 
 	if len(r.VenueStats) == 0 && len(r.GlobalStats) == 0 {
@@ -44,7 +44,7 @@ func (c *Command) Run(d *cache.DB) error {
 	if r.Venue != "" && len(r.VenueStats) > 0 {
 		fmt.Printf("At %s:\n\n", r.Venue)
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.VenueStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 		fmt.Println()
 	}
@@ -55,7 +55,7 @@ func (c *Command) Run(d *cache.DB) error {
 			fmt.Println()
 		}
 		if err := output.Table(os.Stdout, headers(), statsToRows(r.GlobalStats)); err != nil {
-			return err
+			return fmt.Errorf("write table: %w", err)
 		}
 
 		if r.Venue != "" {
