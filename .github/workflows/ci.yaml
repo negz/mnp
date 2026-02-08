@@ -193,3 +193,11 @@ jobs:
             --title "${VERSION}" \
             --generate-notes \
             artifacts/*
+
+      - name: Setup flyctl
+        uses: superfly/flyctl-actions/setup-flyctl@master
+
+      - name: Deploy to Fly.io
+        run: flyctl deploy --image ghcr.io/${{ github.repository }}:${{ needs.detect.outputs.version }}
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLYIO_TOKEN }}
