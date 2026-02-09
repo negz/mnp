@@ -161,7 +161,7 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		log.Info("request", "method", r.Method, "path", r.URL.RequestURI(), "status", rec.status, "duration", time.Since(start))
+		log.Info("request", "method", r.Method, "path", r.URL.RequestURI(), "status", rec.status, "duration", time.Since(start), "ua", r.UserAgent())
 	})
 }
 
