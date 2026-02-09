@@ -22,8 +22,15 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
 
-	// Enable foreign keys and WAL mode for better performance.
-	if _, err := db.ExecContext(ctx, "PRAGMA foreign_keys = ON; PRAGMA journal_mode = WAL;"); err != nil {
+	pragmas := `
+		PRAGMA journal_mode = WAL;      -- Write-ahead log for concurrent reads during writes.
+		PRAGMA foreign_keys = ON;       -- Enforce foreign key constraints.
+		PRAGMA busy_timeout = 5000;     -- Wait up to 5s for locks instead of failing immediately.
+		PRAGMA synchronous = NORMAL;    -- Fsync less often; safe with WAL, ~2x faster writes.
+		PRAGMA cache_size = -20000;     -- ~20MB page cache (default is ~2MB).
+		PRAGMA mmap_size = 268435456;   -- Memory-map up to 256MB, avoiding read() syscall overhead.
+	`
+	if _, err := db.ExecContext(ctx, pragmas); err != nil {
 		db.Close() //nolint:errcheck // Already returning an error.
 		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
@@ -204,7 +211,7 @@ CREATE TABLE IF NOT EXISTS game_results (
 );
 
 -- Indexes for common query patterns
-CREATE INDEX IF NOT EXISTS idx_game_results_player ON game_results(player_id);
+CREATE INDEX IF NOT EXISTS idx_game_results_player_score ON game_results(player_id, score);
 CREATE INDEX IF NOT EXISTS idx_game_results_machine ON game_results(game_id);
 CREATE INDEX IF NOT EXISTS idx_games_machine ON games(machine_key);
 CREATE INDEX IF NOT EXISTS idx_matches_season ON matches(season_id);
