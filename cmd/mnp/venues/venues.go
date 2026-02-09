@@ -18,7 +18,7 @@ type Command struct {
 // Run executes the venues command.
 func (c *Command) Run(d *cache.DB) error {
 	ctx := context.Background()
-	store, err := d.Store(ctx)
+	store, err := d.SyncedStore(ctx)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

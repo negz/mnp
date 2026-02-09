@@ -225,21 +225,14 @@ func (c *Client) pull(ctx context.Context) error {
 
 	if _, err := os.Stat(filepath.Join(c.archivePath, ".git")); err == nil {
 		c.log.Info("Updating MNP archive")
-		r, err := git.PlainOpen(c.archivePath)
-		if err != nil {
-			return fmt.Errorf("open repo: %w", err)
+		uerr := c.update(ctx, progress)
+		if uerr == nil {
+			return nil
 		}
-		w, err := r.Worktree()
-		if err != nil {
-			return fmt.Errorf("get worktree: %w", err)
+		c.log.Info("Update failed, re-cloning", "err", uerr)
+		if err := os.RemoveAll(c.archivePath); err != nil {
+			return fmt.Errorf("remove corrupt repo: %w", err)
 		}
-		if err := w.Reset(&git.ResetOptions{Mode: git.HardReset}); err != nil {
-			return fmt.Errorf("reset worktree: %w", err)
-		}
-		if err := w.PullContext(ctx, &git.PullOptions{Progress: progress}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
-			return err
-		}
-		return nil
 	}
 
 	c.log.Info("Cloning MNP archive")
@@ -250,4 +243,22 @@ func (c *Client) pull(ctx context.Context) error {
 		Progress:     progress,
 	})
 	return err
+}
+
+func (c *Client) update(ctx context.Context, progress io.Writer) error {
+	r, err := git.PlainOpen(c.archivePath)
+	if err != nil {
+		return fmt.Errorf("open repo: %w", err)
+	}
+	w, err := r.Worktree()
+	if err != nil {
+		return fmt.Errorf("get worktree: %w", err)
+	}
+	if err := w.Reset(&git.ResetOptions{Mode: git.HardReset}); err != nil {
+		return fmt.Errorf("reset worktree: %w", err)
+	}
+	if err := w.PullContext(ctx, &git.PullOptions{Progress: progress}); err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
+		return err
+	}
+	return nil
 }
