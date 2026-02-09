@@ -28,7 +28,7 @@ func Dir() string {
 // DB provides access to an MNP database.
 // It lazily opens the database on first use.
 type DB struct {
-	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL." hidden:""`
+	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL."`
 	ForceSync  bool   `help:"Sync data before running command."                      name:"sync"                      short:"s"`
 
 	log   *slog.Logger
