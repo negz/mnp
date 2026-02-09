@@ -25,10 +25,10 @@ func Dir() string {
 	return filepath.Join(base, "mnp")
 }
 
-// DB provides access to a synced MNP database.
-// It lazily opens and syncs the database on first use.
+// DB provides access to an MNP database.
+// It lazily opens the database on first use.
 type DB struct {
-	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL." hidden:""`
+	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL."`
 	ForceSync  bool   `help:"Sync data before running command."                      name:"sync"                      short:"s"`
 
 	log   *slog.Logger
@@ -40,7 +40,9 @@ func (d *DB) SetLogger(log *slog.Logger) {
 	d.log = log
 }
 
-// Store returns the database store, opening and syncing if needed.
+// Store returns the database store, opening it if needed. It does not sync
+// data from the archive. Use SyncedStore when the caller needs fresh data
+// before proceeding.
 func (d *DB) Store(ctx context.Context) (*db.SQLiteStore, error) {
 	if d.store != nil {
 		return d.store, nil
@@ -64,6 +66,15 @@ func (d *DB) Store(ctx context.Context) (*db.SQLiteStore, error) {
 	}
 
 	d.store = store
+	return d.store, nil
+}
+
+// SyncedStore returns the database store, syncing data from the archive first.
+func (d *DB) SyncedStore(ctx context.Context) (*db.SQLiteStore, error) {
+	store, err := d.Store(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := d.Sync(ctx); err != nil {
 		d.store.Close() //nolint:errcheck // Already returning error.
@@ -71,7 +82,7 @@ func (d *DB) Store(ctx context.Context) (*db.SQLiteStore, error) {
 		return nil, err
 	}
 
-	return d.store, nil
+	return store, nil
 }
 
 // Close closes the database connection.

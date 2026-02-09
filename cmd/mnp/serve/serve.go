@@ -28,7 +28,7 @@ func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	go web.Sync(ctx, d.Sync, 24*time.Hour, log)
+	go web.Sync(ctx, d.Sync, 15*time.Minute, log)
 
 	handler := web.WithLogging(web.NewServer(store, log).Handler(), log)
 
