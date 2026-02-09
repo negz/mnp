@@ -15,6 +15,9 @@ primary_region = 'sjc'
   method = 'get'
   path = '/healthz'
 
+[experimental]
+  cmd = ["--verbose", "serve"]
+
 [mounts]
   source = 'mnp_cache'
   destination = '/cache'

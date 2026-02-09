@@ -12,6 +12,11 @@ fly ips allocate-v6 -a mnp
 # This stores the SQLite database and cloned git repo across restarts.
 fly volumes create mnp_cache --region sjc --size 1 -a mnp
 
+# 4 shared cores with 1GB RAM. Burst balance from idle time covers
+# league night traffic and cold-start syncs. With scale-to-zero this
+# costs under $2/month at ~17 hours of usage.
+fly scale vm shared-cpu-4x --memory 1024 -a mnp
+
 # Add the custom domain. The output will show IP addresses to configure
 # as A/AAAA DNS records in Cloudflare (proxy off, DNS-only).
 fly certs add mondaynightplanball.com -a mnp
