@@ -260,7 +260,8 @@ type homeData struct {
 }
 
 func (s *Server) handleHome(w http.ResponseWriter, r *http.Request) {
-	today := time.Now().Format("2006-01-02")
+	seattle, _ := time.LoadLocation("America/Los_Angeles")
+	today := time.Now().In(seattle).Format("2006-01-02")
 	matches, err := s.store.ListSchedule(r.Context(), "")
 	if err != nil {
 		s.log.Error("list schedule", "err", err)
@@ -314,7 +315,8 @@ func (s *Server) handleTeam(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	team := strings.ToUpper(r.PathValue("team"))
 
-	today := time.Now().Format("2006-01-02")
+	seattle, _ := time.LoadLocation("America/Los_Angeles")
+	today := time.Now().In(seattle).Format("2006-01-02")
 	matches, err := s.store.ListSchedule(ctx, today)
 	if err != nil {
 		s.log.Error("list schedule", "err", err)
