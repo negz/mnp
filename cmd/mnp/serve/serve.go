@@ -21,30 +21,27 @@ type Command struct {
 func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 	ctx := context.Background()
 
-	dbStore, err := d.Store(ctx)
+	dbst, err := d.Store(ctx)
 	if err != nil {
 		return err
 	}
 
-	store := cache.NewInMemoryStore(dbStore)
+	st := cache.NewInMemoryStore(dbst)
 
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
 
-	syncAndRefresh := func(ctx context.Context) error {
+	go web.Sync(ctx, func(ctx context.Context) error {
 		if err := d.Sync(ctx); err != nil {
 			return err
 		}
-		return store.Refresh(ctx)
-	}
-	go web.Sync(ctx, syncAndRefresh, 15*time.Minute, log)
-
-	handler := web.WithLogging(web.WithCacheControl(web.NewServer(store, log).Handler(), "public, max-age=60"), log)
+		return st.Refresh(ctx)
+	}, 15*time.Minute, log)
 
 	log.Info("Starting web server", "addr", c.Addr)
 
 	s := &http.Server{
 		Addr:              c.Addr,
-		Handler:           handler,
+		Handler:           web.WithLogging(web.WithCacheControl(web.NewServer(st, log).Handler(), "public, max-age=60"), log),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}
