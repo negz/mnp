@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/negz/mnp/internal/cache"
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/output"
 	"github.com/negz/mnp/internal/strategy/matchup"
@@ -30,20 +31,6 @@ var static embed.FS
 //go:embed templates
 var tmpls embed.FS
 
-// Store is the set of queries needed by the web UI. It composes the strategy
-// package store interfaces with the list queries used to populate dropdowns.
-type Store interface { //nolint:interfacebloat // Composes four strategy store interfaces plus list queries.
-	scout.Store
-	matchup.Store
-	recommend.Store
-	player.Store
-
-	ListTeams(ctx context.Context, search string) ([]db.TeamSummary, error)
-	ListVenues(ctx context.Context, search string) ([]db.Venue, error)
-	ListMachines(ctx context.Context, search string) ([]db.Machine, error)
-	ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error)
-}
-
 type serverTemplate struct {
 	home      *template.Template
 	team      *template.Template
@@ -56,13 +43,13 @@ type serverTemplate struct {
 
 // Server serves the MNP web UI.
 type Server struct {
-	store    Store
+	store    cache.Store
 	log      *slog.Logger
 	template serverTemplate
 }
 
 // NewServer returns a new Server.
-func NewServer(store Store, log *slog.Logger) *Server {
+func NewServer(store cache.Store, log *slog.Logger) *Server {
 	return &Server{
 		store: store,
 		log:   log,
@@ -83,7 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, _ := fs.Sub(static, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.Handle("GET /static/", WithCacheControl(http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))), "public, max-age=86400"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -162,6 +149,15 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		log.Info("request", "method", r.Method, "path", r.URL.RequestURI(), "status", rec.status, "duration", time.Since(start), "ua", r.UserAgent())
+	})
+}
+
+// WithCacheControl wraps an http.Handler to set a Cache-Control header on all
+// responses.
+func WithCacheControl(next http.Handler, value string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", value)
+		next.ServeHTTP(w, r)
 	})
 }
 
