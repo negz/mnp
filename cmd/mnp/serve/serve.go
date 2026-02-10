@@ -38,7 +38,7 @@ func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 	}
 	go web.Sync(ctx, syncAndRefresh, 15*time.Minute, log)
 
-	handler := web.WithLogging(web.NewServer(store, log).Handler(), log)
+	handler := web.WithLogging(web.WithCacheControl(web.NewServer(store, log).Handler(), "public, max-age=60"), log)
 
 	log.Info("Starting web server", "addr", c.Addr)
 
@@ -46,6 +46,7 @@ func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 		Addr:              c.Addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      30 * time.Second,
 	}
 
 	return s.ListenAndServe()

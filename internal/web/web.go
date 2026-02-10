@@ -70,7 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	staticFS, _ := fs.Sub(static, "static")
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))))
+	mux.Handle("GET /static/", WithCacheControl(http.StripPrefix("/static/", http.FileServer(http.FS(staticFS))), "public, max-age=86400"))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
@@ -146,6 +146,15 @@ func WithLogging(next http.Handler, log *slog.Logger) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(rec, r)
 		log.Info("request", "method", r.Method, "path", r.URL.RequestURI(), "status", rec.status, "duration", time.Since(start))
+	})
+}
+
+// WithCacheControl wraps an http.Handler to set a Cache-Control header on all
+// responses.
+func WithCacheControl(next http.Handler, value string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", value)
+		next.ServeHTTP(w, r)
 	})
 }
 
