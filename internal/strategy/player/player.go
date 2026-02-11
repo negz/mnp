@@ -17,7 +17,7 @@ const minGamesForAnalysis = 3
 type Store interface {
 	GetLeagueP50(ctx context.Context) (map[string]float64, error)
 	GetMachineNames(ctx context.Context) (map[string]string, error)
-	GetPlayerTeam(ctx context.Context, playerName string) (db.PlayerTeam, error)
+	GetPlayer(ctx context.Context, playerName string) (db.PlayerSummary, error)
 	GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error)
 	GetVenueMachines(ctx context.Context, venueKey string) (map[string]bool, error)
 }
@@ -97,9 +97,9 @@ func Analyze(ctx context.Context, s Store, name string, opts ...Option) (*Result
 
 	var team *Team
 	var ipr int
-	if pt, err := s.GetPlayerTeam(ctx, name); err == nil {
-		team = &Team{Key: pt.TeamKey, Name: pt.TeamName}
-		ipr = pt.IPR
+	if p, err := s.GetPlayer(ctx, name); err == nil {
+		team = &Team{Key: p.TeamKey, Name: p.Team}
+		ipr = p.IPR
 	}
 
 	return &Result{
@@ -132,9 +132,9 @@ func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 m
 
 	var team *Team
 	var ipr int
-	if pt, err := s.GetPlayerTeam(ctx, name); err == nil {
-		team = &Team{Key: pt.TeamKey, Name: pt.TeamName}
-		ipr = pt.IPR
+	if p, err := s.GetPlayer(ctx, name); err == nil {
+		team = &Team{Key: p.TeamKey, Name: p.Team}
+		ipr = p.IPR
 	}
 
 	return &Result{

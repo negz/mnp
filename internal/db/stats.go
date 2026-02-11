@@ -353,30 +353,23 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 	return stats, nil
 }
 
-// PlayerTeam contains a player's current team information.
-type PlayerTeam struct {
-	TeamKey  string
-	TeamName string
-	IPR      int
-}
-
-// GetPlayerTeam returns the current team for a player (latest season).
-func (s *SQLiteStore) GetPlayerTeam(ctx context.Context, playerName string) (PlayerTeam, error) {
-	var pt PlayerTeam
+// GetPlayer returns a player's summary info (latest season).
+func (s *SQLiteStore) GetPlayer(ctx context.Context, playerName string) (PlayerSummary, error) {
+	var p PlayerSummary
 	err := s.db.QueryRowContext(ctx, `
-		SELECT t.key, t.name, COALESCE(ipr.ipr, 0)
-		FROM teams t
-		JOIN rosters r ON r.team_id = t.id
-		JOIN players p ON p.id = r.player_id
+		SELECT p.name, t.key, t.name, COALESCE(ipr.ipr, 0)
+		FROM players p
+		JOIN rosters r ON r.player_id = p.id
+		JOIN teams t ON t.id = r.team_id
 		LEFT JOIN player_iprs ipr ON ipr.name = p.name
 		WHERE p.name = ?
 		ORDER BY t.season_id DESC
 		LIMIT 1
-	`, playerName).Scan(&pt.TeamKey, &pt.TeamName, &pt.IPR)
+	`, playerName).Scan(&p.Name, &p.TeamKey, &p.Team, &p.IPR)
 	if err != nil {
-		return pt, fmt.Errorf("get player team: %w", err)
+		return p, fmt.Errorf("get player: %w", err)
 	}
-	return pt, nil
+	return p, nil
 }
 
 // GetMachineNames returns a map of machine key to machine name for all machines.

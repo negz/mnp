@@ -207,9 +207,9 @@ func (s *InMemoryStore) GetPlayerMachineStats(ctx context.Context, teamKey, mach
 	return s.wrapped.GetPlayerMachineStats(ctx, teamKey, machineKey, venueKey)
 }
 
-// GetPlayerTeam passes through to the underlying store.
-func (s *InMemoryStore) GetPlayerTeam(ctx context.Context, playerName string) (db.PlayerTeam, error) {
-	return s.wrapped.GetPlayerTeam(ctx, playerName)
+// GetPlayer passes through to the underlying store.
+func (s *InMemoryStore) GetPlayer(ctx context.Context, playerName string) (db.PlayerSummary, error) {
+	return s.wrapped.GetPlayer(ctx, playerName)
 }
 
 // GetSinglePlayerMachineStats passes through to the underlying store.
