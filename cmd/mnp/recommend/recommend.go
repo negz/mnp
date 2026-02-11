@@ -153,15 +153,8 @@ func statsToRows(stats []recommend.PlayerStats) [][]string {
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, s.LeagueP50),
 			output.FormatScore(s.P90Score),
-			formatIPR(s.IPR),
+			output.FormatIPR(s.IPR),
 		}
 	}
 	return rows
-}
-
-func formatIPR(ipr int) string {
-	if ipr == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d", ipr)
 }

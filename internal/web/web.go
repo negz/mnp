@@ -203,12 +203,7 @@ func newTemplateFuncs() template.FuncMap {
 			return name
 		},
 		"pathEscape": url.PathEscape,
-		"formatIPR": func(ipr int) string {
-			if ipr == 0 {
-				return "-"
-			}
-			return strconv.Itoa(ipr)
-		},
+		"formatIPR":  output.FormatIPR,
 	}
 }
 
