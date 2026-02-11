@@ -63,3 +63,11 @@ func MachineName(names map[string]string, key string) string {
 	}
 	return key
 }
+
+// FormatIPR formats an IPR value, returning "-" for zero (unknown).
+func FormatIPR(ipr int) string {
+	if ipr == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", ipr)
+}

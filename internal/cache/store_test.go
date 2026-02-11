@@ -189,3 +189,67 @@ func TestListMachinesFilter(t *testing.T) {
 		})
 	}
 }
+
+func TestListPlayersFilter(t *testing.T) {
+	type want struct {
+		players []db.PlayerSummary
+	}
+
+	all := []db.PlayerSummary{
+		{Name: "Alice", TeamKey: "CRA", Team: "Castle Crashers"},
+		{Name: "Bob", TeamKey: "PYC", Team: "Pinballycule"},
+		{Name: "Charlie", TeamKey: "DSV", Team: "Death Savers"},
+	}
+
+	cases := map[string]struct {
+		reason string
+		search string
+		want   want
+	}{
+		"EmptySearch": {
+			reason: "An empty search should return all players.",
+			search: "",
+			want:   want{players: all},
+		},
+		"MatchByName": {
+			reason: "Search should match against the player name, case-insensitively.",
+			search: "alice",
+			want:   want{players: []db.PlayerSummary{{Name: "Alice", TeamKey: "CRA", Team: "Castle Crashers"}}},
+		},
+		"MatchByTeamKey": {
+			reason: "Search should match against the team key, case-insensitively.",
+			search: "pyc",
+			want:   want{players: []db.PlayerSummary{{Name: "Bob", TeamKey: "PYC", Team: "Pinballycule"}}},
+		},
+		"MatchByTeamName": {
+			reason: "Search should match against the team name, case-insensitively.",
+			search: "death",
+			want:   want{players: []db.PlayerSummary{{Name: "Charlie", TeamKey: "DSV", Team: "Death Savers"}}},
+		},
+		"NoMatch": {
+			reason: "A search that matches nothing should return nil.",
+			search: "zzz",
+			want:   want{players: nil},
+		},
+		"CaseInsensitive": {
+			reason: "Search should be case-insensitive.",
+			search: "BOB",
+			want:   want{players: []db.PlayerSummary{{Name: "Bob", TeamKey: "PYC", Team: "Pinballycule"}}},
+		},
+	}
+
+	s := &InMemoryStore{players: all}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := s.ListPlayers(context.Background(), tc.search)
+			if err != nil {
+				t.Fatalf("\n%s\nListPlayers(...): unexpected error: %v", tc.reason, err)
+			}
+
+			if diff := cmp.Diff(tc.want.players, got); diff != "" {
+				t.Errorf("\n%s\nListPlayers(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}

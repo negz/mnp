@@ -10,13 +10,13 @@
     :root {
       --pico-font-size: 16px;
     }
-    .schedule-header {
+    .page-header {
       display: flex;
       align-items: baseline;
       justify-content: space-between;
       gap: 1rem;
     }
-    .schedule-header select {
+    .page-header select {
       width: auto;
       margin-bottom: 0;
     }
@@ -25,12 +25,11 @@
       text-underline-offset: 0.2em;
       cursor: help;
     }
-
     @media (max-width: 768px) {
-      .schedule-header {
+      .page-header {
         display: block;
       }
-      .schedule-header select {
+      .page-header select {
         width: 100%;
       }
       /* Data tables: label/value cards */

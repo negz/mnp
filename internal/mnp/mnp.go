@@ -125,6 +125,15 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 		return fmt.Errorf("load venues: %w", err)
 	}
 
+	// IPRs.
+	var iprs IPRs
+	if err := iprs.Extract(filepath.Join(c.archivePath, "IPR.csv")); err != nil {
+		return fmt.Errorf("extract IPRs: %w", err)
+	}
+	if err := iprs.Load(ctx, c.store); err != nil {
+		return fmt.Errorf("load IPRs: %w", err)
+	}
+
 	// Seasons and matches.
 	for _, seasonNum := range seasons {
 		c.log.Info("Loading season", "season", seasonNum)

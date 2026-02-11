@@ -434,18 +434,18 @@ func TestGetSinglePlayerMachineStats(t *testing.T) {
 	}
 }
 
-func TestGetPlayerTeam(t *testing.T) {
+func TestGetPlayer(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()
 
-	got, err := s.GetPlayerTeam(ctx, "Alice")
+	got, err := s.GetPlayer(ctx, "Alice")
 	if err != nil {
-		t.Fatalf("GetPlayerTeam: %v", err)
+		t.Fatalf("GetPlayer: %v", err)
 	}
 
-	want := PlayerTeam{TeamKey: "TTT", TeamName: "The Trailer Trashers"}
+	want := PlayerSummary{Name: "Alice", TeamKey: "TTT", Team: "The Trailer Trashers"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("GetPlayerTeam(...): -want, +got:\n%s", diff)
+		t.Errorf("GetPlayer(...): -want, +got:\n%s", diff)
 	}
 }
 

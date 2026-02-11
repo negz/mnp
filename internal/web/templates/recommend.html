@@ -42,6 +42,7 @@
       <th title="Number of games played on this machine">Games</th>
       <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
       <th title="90th percentile score — their ceiling">P90</th>
+      <th title="Individual Player Rating">IPR</th>
     </tr>
   </thead>
   <tbody>
@@ -51,6 +52,7 @@
       <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
       <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
       <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>
@@ -66,6 +68,7 @@
       <th title="Number of games played on this machine">Games</th>
       <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
       <th title="90th percentile score — their ceiling">P90</th>
+      <th title="Individual Player Rating">IPR</th>
     </tr>
   </thead>
   <tbody>
@@ -75,6 +78,7 @@
       <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
       <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
       <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>
@@ -91,6 +95,7 @@
       <th title="Number of games played on this machine">Games</th>
       <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
       <th title="90th percentile score — their ceiling">P90</th>
+      <th title="Individual Player Rating">IPR</th>
     </tr>
   </thead>
   <tbody>
@@ -100,6 +105,7 @@
       <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
       <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
       <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
+      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>

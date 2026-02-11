@@ -11,6 +11,7 @@ type PlayerStats struct {
 	Games    int
 	P50Score float64 // Median (50th percentile)
 	P90Score float64 // 90th percentile
+	IPR      int
 }
 
 // TeamMachineStats contains aggregated stats for a team on a specific machine.
@@ -352,28 +353,23 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 	return stats, nil
 }
 
-// PlayerTeam contains a player's current team information.
-type PlayerTeam struct {
-	TeamKey  string
-	TeamName string
-}
-
-// GetPlayerTeam returns the current team for a player (latest season).
-func (s *SQLiteStore) GetPlayerTeam(ctx context.Context, playerName string) (PlayerTeam, error) {
-	var pt PlayerTeam
+// GetPlayer returns a player's summary info (latest season).
+func (s *SQLiteStore) GetPlayer(ctx context.Context, playerName string) (PlayerSummary, error) {
+	var p PlayerSummary
 	err := s.db.QueryRowContext(ctx, `
-		SELECT t.key, t.name
-		FROM teams t
-		JOIN rosters r ON r.team_id = t.id
-		JOIN players p ON p.id = r.player_id
+		SELECT p.name, t.key, t.name, COALESCE(ipr.ipr, 0)
+		FROM players p
+		JOIN rosters r ON r.player_id = p.id
+		JOIN teams t ON t.id = r.team_id
+		LEFT JOIN player_iprs ipr ON ipr.name = p.name
 		WHERE p.name = ?
 		ORDER BY t.season_id DESC
 		LIMIT 1
-	`, playerName).Scan(&pt.TeamKey, &pt.TeamName)
+	`, playerName).Scan(&p.Name, &p.TeamKey, &p.Team, &p.IPR)
 	if err != nil {
-		return pt, fmt.Errorf("get player team: %w", err)
+		return p, fmt.Errorf("get player: %w", err)
 	}
-	return pt, nil
+	return p, nil
 }
 
 // GetMachineNames returns a map of machine key to machine name for all machines.
@@ -421,11 +417,13 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			SELECT
 				p.id as player_id,
 				p.name,
+				COALESCE(pipr.ipr, 0) as ipr,
 				gr.score,
 				ROW_NUMBER() OVER (PARTITION BY p.id ORDER BY gr.score) as rn,
 				COUNT(*) OVER (PARTITION BY p.id) as total
 			FROM game_results gr
 			JOIN players p ON p.id = gr.player_id
+			LEFT JOIN player_iprs pipr ON pipr.name = p.name
 			JOIN games g ON g.id = gr.game_id
 			JOIN matches m ON m.id = g.match_id
 			WHERE g.machine_key = ?
@@ -441,7 +439,7 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 	query += `
 		),
 		player_agg AS (
-			SELECT DISTINCT player_id, name, total
+			SELECT DISTINCT player_id, name, ipr, total
 			FROM player_scores
 		)
 		SELECT
@@ -450,7 +448,8 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
 			 AND ps.rn = (pa.total + 1) / 2) as p50,
 			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
-			 AND ps.rn = (pa.total * 9 + 9) / 10) as p90
+			 AND ps.rn = (pa.total * 9 + 9) / 10) as p90,
+			pa.ipr
 		FROM player_agg pa
 		ORDER BY p50 DESC
 	`
@@ -464,7 +463,7 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 	var stats []PlayerStats
 	for rows.Next() {
 		var ps PlayerStats
-		if err := rows.Scan(&ps.Name, &ps.Games, &ps.P50Score, &ps.P90Score); err != nil {
+		if err := rows.Scan(&ps.Name, &ps.Games, &ps.P50Score, &ps.P90Score, &ps.IPR); err != nil {
 			return nil, fmt.Errorf("scan player stats: %w", err)
 		}
 		stats = append(stats, ps)

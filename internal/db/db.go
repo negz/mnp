@@ -139,6 +139,13 @@ CREATE TABLE IF NOT EXISTS players (
     name TEXT NOT NULL UNIQUE       -- Player's display name
 );
 
+-- Individual Player Ratings (from IPR.csv, keyed by player name)
+-- Loaded independently of the players table; joined by name.
+CREATE TABLE IF NOT EXISTS player_iprs (
+    name TEXT PRIMARY KEY,          -- Player name (matches players.name)
+    ipr INTEGER NOT NULL            -- Rating (1-6)
+);
+
 -- Teams (per season - team keys can repeat across seasons)
 --
 -- Example: key='CRA', name='Castle Crashers', season_id=10

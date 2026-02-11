@@ -14,7 +14,7 @@ import (
 type MockStore struct {
 	MockGetLeagueP50                func(ctx context.Context) (map[string]float64, error)
 	MockGetMachineNames             func(ctx context.Context) (map[string]string, error)
-	MockGetPlayerTeam               func(ctx context.Context, playerName string) (db.PlayerTeam, error)
+	MockGetPlayer                   func(ctx context.Context, playerName string) (db.PlayerSummary, error)
 	MockGetSinglePlayerMachineStats func(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error)
 	MockGetVenueMachines            func(ctx context.Context, venueKey string) (map[string]bool, error)
 }
@@ -27,8 +27,8 @@ func (m *MockStore) GetMachineNames(ctx context.Context) (map[string]string, err
 	return m.MockGetMachineNames(ctx)
 }
 
-func (m *MockStore) GetPlayerTeam(ctx context.Context, playerName string) (db.PlayerTeam, error) {
-	return m.MockGetPlayerTeam(ctx, playerName)
+func (m *MockStore) GetPlayer(ctx context.Context, playerName string) (db.PlayerSummary, error) {
+	return m.MockGetPlayer(ctx, playerName)
 }
 
 func (m *MockStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error) {
@@ -84,8 +84,8 @@ func TestAnalyze(t *testing.T) {
 							{MachineKey: "AFM", Games: 4, P50Score: 10_000_000, P90Score: 15_000_000},
 						}, nil
 					},
-					MockGetPlayerTeam: func(_ context.Context, _ string) (db.PlayerTeam, error) {
-						return db.PlayerTeam{TeamKey: "CRA", TeamName: "Castle Crashers"}, nil
+					MockGetPlayer: func(_ context.Context, _ string) (db.PlayerSummary, error) {
+						return db.PlayerSummary{TeamKey: "CRA", Team: "Castle Crashers"}, nil
 					},
 				},
 				name: "Alice",
@@ -122,8 +122,8 @@ func TestAnalyze(t *testing.T) {
 							{MachineKey: "TAF", Games: 5, P50Score: 50_000_000},
 						}, nil
 					},
-					MockGetPlayerTeam: func(_ context.Context, _ string) (db.PlayerTeam, error) {
-						return db.PlayerTeam{}, errors.New("not found")
+					MockGetPlayer: func(_ context.Context, _ string) (db.PlayerSummary, error) {
+						return db.PlayerSummary{}, errors.New("not found")
 					},
 				},
 				name: "Unknown",
@@ -160,8 +160,8 @@ func TestAnalyze(t *testing.T) {
 							{MachineKey: "TZ", Games: 5, P50Score: 20_000_000},
 						}, nil
 					},
-					MockGetPlayerTeam: func(_ context.Context, _ string) (db.PlayerTeam, error) {
-						return db.PlayerTeam{TeamKey: "CRA", TeamName: "Castle Crashers"}, nil
+					MockGetPlayer: func(_ context.Context, _ string) (db.PlayerSummary, error) {
+						return db.PlayerSummary{TeamKey: "CRA", Team: "Castle Crashers"}, nil
 					},
 				},
 				name: "Alice",

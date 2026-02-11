@@ -130,6 +130,58 @@ func (s *SQLiteStore) ListTeams(ctx context.Context, search string) ([]TeamSumma
 	return result, nil
 }
 
+// PlayerSummary contains player info for display, including their current team.
+type PlayerSummary struct {
+	Name    string
+	TeamKey string
+	Team    string
+	IPR     int
+}
+
+// ListPlayers returns players on rosters for the current (latest) season,
+// optionally filtered by a case-insensitive search term matching player name,
+// team key, or team name.
+func (s *SQLiteStore) ListPlayers(ctx context.Context, search string) ([]PlayerSummary, error) {
+	query := `
+		SELECT p.name, t.key, t.name, COALESCE(ipr.ipr, 0)
+		FROM players p
+		JOIN rosters r ON r.player_id = p.id
+		JOIN teams t ON t.id = r.team_id
+		LEFT JOIN player_iprs ipr ON ipr.name = p.name
+		WHERE t.season_id = (SELECT MAX(season_id) FROM teams)
+	`
+	var args []any
+
+	if search != "" {
+		query += " AND (LOWER(p.name) LIKE ? OR LOWER(t.key) LIKE ? OR LOWER(t.name) LIKE ?)"
+		pattern := "%" + strings.ToLower(search) + "%"
+		args = append(args, pattern, pattern, pattern)
+	}
+
+	query += " ORDER BY p.name"
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query players: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var result []PlayerSummary
+	for rows.Next() {
+		var p PlayerSummary
+		if err := rows.Scan(&p.Name, &p.TeamKey, &p.Team, &p.IPR); err != nil {
+			return nil, fmt.Errorf("scan player: %w", err)
+		}
+		result = append(result, p)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate players: %w", err)
+	}
+
+	return result, nil
+}
+
 // ListMachineKeys returns the keys of all known machines.
 func (s *SQLiteStore) ListMachineKeys(ctx context.Context) (map[string]bool, error) {
 	rows, err := s.db.QueryContext(ctx, "SELECT key FROM machines")

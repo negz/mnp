@@ -203,6 +203,7 @@ func newTemplateFuncs() template.FuncMap {
 			return name
 		},
 		"pathEscape": url.PathEscape,
+		"formatIPR":  output.FormatIPR,
 	}
 }
 
@@ -309,6 +310,7 @@ type teamData struct {
 	TeamKey  string
 	TeamName string
 	Matches  []db.ScheduleMatch
+	Roster   []db.PlayerSummary
 }
 
 func (s *Server) handleTeam(w http.ResponseWriter, r *http.Request) {
@@ -337,7 +339,15 @@ func (s *Server) handleTeam(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if err := s.template.team.ExecuteTemplate(w, "layout.html", teamData{TeamKey: team, TeamName: name, Matches: matches}); err != nil {
+	roster, _ := s.store.ListPlayers(ctx, team)
+	var filtered []db.PlayerSummary
+	for _, p := range roster {
+		if p.TeamKey == team {
+			filtered = append(filtered, p)
+		}
+	}
+
+	if err := s.template.team.ExecuteTemplate(w, "layout.html", teamData{TeamKey: team, TeamName: name, Matches: matches, Roster: filtered}); err != nil {
 		s.log.Error("render template", "err", err)
 	}
 }
