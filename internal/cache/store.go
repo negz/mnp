@@ -21,6 +21,7 @@ type Store interface { //nolint:interfacebloat // Composes four strategy store i
 	player.Store
 
 	ListTeams(ctx context.Context, search string) ([]db.TeamSummary, error)
+	ListPlayers(ctx context.Context, search string) ([]db.PlayerSummary, error)
 	ListVenues(ctx context.Context, search string) ([]db.Venue, error)
 	ListMachines(ctx context.Context, search string) ([]db.Machine, error)
 	ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error)
@@ -36,6 +37,7 @@ type InMemoryStore struct {
 	teams        []db.TeamSummary
 	venues       []db.Venue
 	machines     []db.Machine
+	players      []db.PlayerSummary
 	leagueP50    map[string]float64
 	machineNames map[string]string
 }
@@ -63,6 +65,11 @@ func (s *InMemoryStore) Refresh(ctx context.Context) error {
 		return err
 	}
 
+	players, err := s.wrapped.ListPlayers(ctx, "")
+	if err != nil {
+		return err
+	}
+
 	leagueP50, err := s.wrapped.GetLeagueP50(ctx)
 	if err != nil {
 		return err
@@ -79,6 +86,7 @@ func (s *InMemoryStore) Refresh(ctx context.Context) error {
 	s.teams = teams
 	s.venues = venues
 	s.machines = machines
+	s.players = players
 	s.leagueP50 = leagueP50
 	s.machineNames = machineNames
 
@@ -139,6 +147,25 @@ func (s *InMemoryStore) ListMachines(_ context.Context, search string) ([]db.Mac
 	for _, m := range s.machines {
 		if strings.Contains(strings.ToLower(m.Key), search) || strings.Contains(strings.ToLower(m.Name), search) {
 			out = append(out, m)
+		}
+	}
+	return out, nil
+}
+
+// ListPlayers returns players from the cache, optionally filtered by search term.
+func (s *InMemoryStore) ListPlayers(_ context.Context, search string) ([]db.PlayerSummary, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if search == "" {
+		return s.players, nil
+	}
+
+	search = strings.ToLower(search)
+	var out []db.PlayerSummary
+	for _, p := range s.players {
+		if strings.Contains(strings.ToLower(p.Name), search) || strings.Contains(strings.ToLower(p.TeamKey), search) || strings.Contains(strings.ToLower(p.Team), search) {
+			out = append(out, p)
 		}
 	}
 	return out, nil

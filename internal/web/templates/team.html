@@ -1,7 +1,17 @@
 {{define "title"}}MNP - {{.TeamName}}{{end}}
 
 {{define "content"}}
-<h2>{{.TeamName}}</h2>
+<div class="page-header">
+  <h2>{{.TeamName}}</h2>
+  {{if .Roster}}
+  <select onchange="if(this.value) window.location.href=this.value">
+    <option value="">Roster ({{len .Roster}})</option>
+    {{range .Roster}}
+    <option value="/p/{{.Name}}">{{.Name}}</option>
+    {{end}}
+  </select>
+  {{end}}
+</div>
 
 {{if .Matches}}
 <table class="striped schedule">
