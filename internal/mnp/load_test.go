@@ -3,6 +3,8 @@ package mnp
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -26,6 +28,7 @@ type MockStore struct {
 	MockGetTeamID          func(ctx context.Context, key string, seasonID int64) (int64, error)
 	MockListMachineKeys    func(ctx context.Context) (map[string]bool, error)
 	MockLoadedSeasons      func(ctx context.Context) (map[int]bool, error)
+	MockUpsertPlayerIPR    func(ctx context.Context, name string, ipr int) error
 }
 
 func (m *MockStore) UpsertMachine(ctx context.Context, machine db.Machine) error {
@@ -82,6 +85,10 @@ func (m *MockStore) ListMachineKeys(ctx context.Context) (map[string]bool, error
 
 func (m *MockStore) LoadedSeasons(ctx context.Context) (map[int]bool, error) {
 	return m.MockLoadedSeasons(ctx)
+}
+
+func (m *MockStore) UpsertPlayerIPR(ctx context.Context, name string, ipr int) error {
+	return m.MockUpsertPlayerIPR(ctx, name, ipr)
 }
 
 func TestMachinesLoad(t *testing.T) {
@@ -1107,6 +1114,148 @@ func TestScheduleLoad(t *testing.T) {
 
 			if diff := cmp.Diff(tc.want.err, err, cmpopts.EquateErrors()); diff != "" {
 				t.Errorf("\n%s\nSchedule.Load(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestIPRsExtract(t *testing.T) {
+	type want struct {
+		raw []iprEntry
+		err error
+	}
+
+	cases := map[string]struct {
+		reason  string
+		content string
+		want    want
+	}{
+		"Success": {
+			reason:  "Valid CSV rows should be parsed into IPR entries with the correct names and ratings.",
+			content: "ipr,name\n3,Alice\n5,Bob\n",
+			want: want{
+				raw: []iprEntry{
+					{Name: "Alice", IPR: 3},
+					{Name: "Bob", IPR: 5},
+				},
+			},
+		},
+		"Empty": {
+			reason:  "A CSV with only a header should produce no entries.",
+			content: "ipr,name\n",
+			want:    want{},
+		},
+		"SkipsNonNumericIPR": {
+			reason:  "Rows with non-numeric IPR values should be silently skipped.",
+			content: "ipr,name\nfoo,Alice\n3,Bob\n",
+			want: want{
+				raw: []iprEntry{
+					{Name: "Bob", IPR: 3},
+				},
+			},
+		},
+		"MalformedRow": {
+			reason:  "A row with the wrong number of fields should return a CSV parse error.",
+			content: "ipr,name\n3\n5,Bob\n",
+			want: want{
+				err: cmpopts.AnyError,
+			},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "IPR.csv")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			var iprs IPRs
+			err := iprs.Extract(path)
+
+			if diff := cmp.Diff(tc.want.err, err, cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\nIPRs.Extract(...): -want error, +got error:\n%s", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.want.raw, iprs.raw, cmpopts.EquateEmpty()); diff != "" {
+				t.Errorf("\n%s\nIPRs.Extract(...): -want raw, +got raw:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestIPRsLoad(t *testing.T) {
+	type args struct {
+		iprs  IPRs
+		store Store
+	}
+
+	type want struct {
+		err error
+	}
+
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   want
+	}{
+		"Success": {
+			reason: "All IPR entries should be upserted into the store with the correct names and ratings.",
+			args: args{
+				iprs: IPRs{raw: []iprEntry{
+					{Name: "Alice", IPR: 3},
+					{Name: "Bob", IPR: 5},
+				}},
+				store: &MockStore{
+					MockUpsertPlayerIPR: func(_ context.Context, name string, ipr int) error {
+						want := map[string]int{
+							"Alice": 3,
+							"Bob":   5,
+						}
+						w, ok := want[name]
+						if !ok {
+							t.Errorf("UpsertPlayerIPR called with unexpected name %q", name)
+							return nil
+						}
+						if diff := cmp.Diff(w, ipr); diff != "" {
+							t.Errorf("UpsertPlayerIPR(%q, ...): -want ipr, +got ipr:\n%s", name, diff)
+						}
+						return nil
+					},
+				},
+			},
+			want: want{},
+		},
+		"Empty": {
+			reason: "Loading with no IPR entries should succeed.",
+			args: args{
+				iprs:  IPRs{},
+				store: &MockStore{},
+			},
+			want: want{},
+		},
+		"UpsertPlayerIPRError": {
+			reason: "An error upserting a player IPR should be returned.",
+			args: args{
+				iprs: IPRs{raw: []iprEntry{
+					{Name: "Alice", IPR: 3},
+				}},
+				store: &MockStore{
+					MockUpsertPlayerIPR: func(_ context.Context, _ string, _ int) error {
+						return errors.New("boom")
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := tc.args.iprs.Load(context.Background(), tc.args.store)
+
+			if diff := cmp.Diff(tc.want.err, err, cmpopts.EquateErrors()); diff != "" {
+				t.Errorf("\n%s\nIPRs.Load(...): -want error, +got error:\n%s", tc.reason, diff)
 			}
 		})
 	}

@@ -138,7 +138,7 @@ func formatAssessment(r *recommend.Result) string {
 }
 
 func headers() []string {
-	return []string{"Player", "Games", "P50 (vs Avg)", "P90"}
+	return []string{"Player", "Games", "P50 (vs Avg)", "P90", "IPR"}
 }
 
 func statsToRows(stats []recommend.PlayerStats) [][]string {
@@ -153,7 +153,15 @@ func statsToRows(stats []recommend.PlayerStats) [][]string {
 			fmt.Sprintf("%d", s.Games),
 			output.FormatP50(s.P50Score, s.LeagueP50),
 			output.FormatScore(s.P90Score),
+			formatIPR(s.IPR),
 		}
 	}
 	return rows
+}
+
+func formatIPR(ipr int) string {
+	if ipr == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d", ipr)
 }

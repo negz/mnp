@@ -2,8 +2,11 @@ package mnp
 
 import (
 	"context"
+	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -28,6 +31,7 @@ type Store interface { //nolint:interfacebloat // Maps 1:1 to the store operatio
 	GetTeamID(ctx context.Context, key string, seasonID int64) (int64, error)
 	ListMachineKeys(ctx context.Context) (map[string]bool, error)
 	LoadedSeasons(ctx context.Context) (map[int]bool, error)
+	UpsertPlayerIPR(ctx context.Context, name string, ipr int) error
 }
 
 // Machines extracts, transforms, and loads pinball machine data.
@@ -490,6 +494,64 @@ func buildResults(g gameJSON, playerNames map[string]string, isDoubles bool) []R
 		})
 	}
 	return results
+}
+
+// IPRs extracts and loads Individual Player Rating data from a CSV file.
+type IPRs struct {
+	raw []iprEntry
+}
+
+type iprEntry struct {
+	Name string
+	IPR  int
+}
+
+// Extract reads and parses IPR data from a CSV file.
+func (ip *IPRs) Extract(path string) error {
+	f, err := os.Open(path) //nolint:gosec // Internal archive path.
+	if err != nil {
+		return fmt.Errorf("open %s: %w", filepath.Base(path), err)
+	}
+	defer f.Close() //nolint:errcheck // Read-only file.
+
+	r := csv.NewReader(f)
+
+	// Skip header.
+	if _, err := r.Read(); err != nil {
+		return fmt.Errorf("read header: %w", err)
+	}
+
+	var entries []iprEntry
+	for {
+		record, err := r.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("read CSV row: %w", err)
+		}
+		if len(record) < 2 {
+			continue
+		}
+		ipr, err := strconv.Atoi(record[0])
+		if err != nil {
+			continue
+		}
+		entries = append(entries, iprEntry{Name: record[1], IPR: ipr})
+	}
+
+	ip.raw = entries
+	return nil
+}
+
+// Load updates player IPR values in the store.
+func (ip *IPRs) Load(ctx context.Context, s Store) error {
+	for _, e := range ip.raw {
+		if err := s.UpsertPlayerIPR(ctx, e.Name, e.IPR); err != nil {
+			return fmt.Errorf("update IPR for %s: %w", e.Name, err)
+		}
+	}
+	return nil
 }
 
 func isoDate(s string) string {

@@ -30,8 +30,12 @@ func (c *Command) Run(d *cache.DB) error {
 
 	rows := make([][]string, len(players))
 	for i, p := range players {
-		rows[i] = []string{p.Name, p.TeamKey, p.Team}
+		ipr := "-"
+		if p.IPR > 0 {
+			ipr = fmt.Sprintf("%d", p.IPR)
+		}
+		rows[i] = []string{p.Name, p.TeamKey, p.Team, ipr}
 	}
 
-	return output.Table(os.Stdout, []string{"Name", "Team Key", "Team"}, rows)
+	return output.Table(os.Stdout, []string{"Name", "Team Key", "Team", "IPR"}, rows)
 }

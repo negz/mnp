@@ -52,6 +52,9 @@ func (c *Command) Run(d *cache.DB) error {
 func printFooter(r *player.Result) {
 	fmt.Println()
 
+	if r.IPR > 0 {
+		fmt.Printf("IPR:  %d\n", r.IPR)
+	}
 	if r.Team != nil {
 		fmt.Printf("Team: %s (%s)\n", r.Team.Name, r.Team.Key)
 	}

@@ -259,6 +259,17 @@ func (s *SQLiteStore) InsertGameResult(ctx context.Context, r GameResult) error 
 	return nil
 }
 
+// UpsertPlayerIPR inserts or updates a player's IPR by name.
+func (s *SQLiteStore) UpsertPlayerIPR(ctx context.Context, name string, ipr int) error {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO player_iprs (name, ipr) VALUES (?, ?)
+		ON CONFLICT(name) DO UPDATE SET ipr = excluded.ipr
+	`, name, ipr); err != nil {
+		return fmt.Errorf("upsert player IPR %s: %w", name, err)
+	}
+	return nil
+}
+
 // DeleteMatchGames deletes all games and results for a match (for re-import).
 func (s *SQLiteStore) DeleteMatchGames(ctx context.Context, matchID int64) error {
 	if _, err := s.db.ExecContext(ctx, `

@@ -5,7 +5,7 @@
 <h2>{{.Name}}</h2>
 
 {{if .Result.Team}}
-<p>Team: <a href="/t/{{.Result.Team.Key}}">{{.Result.Team.Name}}</a></p>
+<p>Team: <a href="/t/{{.Result.Team.Key}}">{{.Result.Team.Name}}</a>{{if .Result.IPR}} · IPR {{.Result.IPR}}{{end}}</p>
 {{end}}
 
 {{if .Result.GlobalStats}}

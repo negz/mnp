@@ -47,6 +47,7 @@ type Analysis struct {
 // Result is the output of a Player query.
 type Result struct {
 	Name        string
+	IPR         int
 	Venue       string         // Empty for global-only queries.
 	Team        *Team          // Nil if player's team can't be determined.
 	GlobalStats []MachineStats // All machines, or filtered to venue machines when a venue is set.
@@ -95,12 +96,15 @@ func Analyze(ctx context.Context, s Store, name string, opts ...Option) (*Result
 	}
 
 	var team *Team
+	var ipr int
 	if pt, err := s.GetPlayerTeam(ctx, name); err == nil {
 		team = &Team{Key: pt.TeamKey, Name: pt.TeamName}
+		ipr = pt.IPR
 	}
 
 	return &Result{
 		Name:        name,
+		IPR:         ipr,
 		Team:        team,
 		GlobalStats: enrichStats(stats, leagueP50, names),
 		Analysis:    analyze(stats, leagueP50, names),
@@ -127,12 +131,15 @@ func playerAtVenue(ctx context.Context, s Store, name, venue string, leagueP50 m
 	}
 
 	var team *Team
+	var ipr int
 	if pt, err := s.GetPlayerTeam(ctx, name); err == nil {
 		team = &Team{Key: pt.TeamKey, Name: pt.TeamName}
+		ipr = pt.IPR
 	}
 
 	return &Result{
 		Name:        name,
+		IPR:         ipr,
 		Venue:       venue,
 		Team:        team,
 		GlobalStats: enrichStats(filtered, leagueP50, machineNames),

@@ -21,6 +21,7 @@ type PlayerStats struct {
 	P50Score    float64
 	P90Score    float64
 	LeagueP50   float64
+	IPR         int
 	NoVenueData bool // True in global stats when this player has no venue-specific data.
 }
 
@@ -191,6 +192,7 @@ func enrichStats(stats []db.PlayerStats, lp50 float64) []PlayerStats {
 			P50Score:  s.P50Score,
 			P90Score:  s.P90Score,
 			LeagueP50: lp50,
+			IPR:       s.IPR,
 		}
 	}
 	return result
