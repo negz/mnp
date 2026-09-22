@@ -10,9 +10,19 @@ import (
 	_ "modernc.org/sqlite" // SQL driver registration.
 )
 
+// querier is the read/write surface shared by *sql.DB and *sql.Tx. Store
+// methods run against it so the same code can execute directly against the pool
+// or inside a rebuild transaction.
+type querier interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // SQLiteStore is a SQLite database for MNP data.
 type SQLiteStore struct {
-	db *sql.DB
+	db   querier // The pool, or a transaction during a rebuild.
+	pool *sql.DB // The pool, for lifecycle and raw access.
 }
 
 // Open opens or creates a SQLite database at the given path.
@@ -35,17 +45,17 @@ func Open(ctx context.Context, path string) (*SQLiteStore, error) {
 		return nil, fmt.Errorf("set pragmas: %w", err)
 	}
 
-	return &SQLiteStore{db: db}, nil
+	return &SQLiteStore{db: db, pool: db}, nil
 }
 
 // Close closes the database.
 func (s *SQLiteStore) Close() error {
-	return s.db.Close()
+	return s.pool.Close()
 }
 
 // DB returns the underlying database connection for direct queries.
 func (s *SQLiteStore) DB() *sql.DB {
-	return s.db
+	return s.pool
 }
 
 // Init creates the database schema.
@@ -60,6 +70,52 @@ func (s *SQLiteStore) Init(ctx context.Context) error {
 func Schema() string {
 	return schema
 }
+
+// Rebuild clears all data and runs fn to repopulate it, in a single
+// transaction. Concurrent readers see the previous data until fn succeeds and
+// the transaction commits, so a rebuild never exposes a partially loaded
+// database. sync_metadata is preserved; every other table is cleared. fn
+// receives a store bound to the transaction.
+func (s *SQLiteStore) Rebuild(ctx context.Context, fn func(tx *SQLiteStore) error) (err error) {
+	tx, err := s.pool.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin rebuild: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			tx.Rollback() //nolint:errcheck // Returning the original error.
+		}
+	}()
+
+	if _, err = tx.ExecContext(ctx, clearData); err != nil {
+		return fmt.Errorf("clear data: %w", err)
+	}
+
+	if err = fn(&SQLiteStore{db: tx, pool: s.pool}); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit rebuild: %w", err)
+	}
+	return nil
+}
+
+// clearData deletes every data row, child tables before parents to satisfy
+// foreign keys. sync_metadata is deliberately left intact.
+const clearData = `
+	DELETE FROM game_results;
+	DELETE FROM games;
+	DELETE FROM matches;
+	DELETE FROM rosters;
+	DELETE FROM venue_machines;
+	DELETE FROM teams;
+	DELETE FROM players;
+	DELETE FROM player_iprs;
+	DELETE FROM venues;
+	DELETE FROM seasons;
+	DELETE FROM machines;
+`
 
 // GetMetadata retrieves a metadata value by key.
 func (s *SQLiteStore) GetMetadata(ctx context.Context, key string) (string, error) {

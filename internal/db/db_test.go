@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -639,6 +640,93 @@ func TestGetMetadata(t *testing.T) {
 				t.Errorf("\n%s\nGetMetadata(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
+	}
+}
+
+func TestRebuild(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	// Repopulate with a single machine, standing in for the archive having
+	// dropped everything else. The fixture's other machines, teams, venues and
+	// players should not survive the rebuild. Metadata written inside the
+	// transaction must, since sync callers record the last full sync there.
+	err := s.Rebuild(ctx, func(tx *SQLiteStore) error {
+		if err := tx.UpsertMachine(ctx, Machine{Key: "AFM", Name: "Attack from Mars"}); err != nil {
+			return err
+		}
+		return tx.SetMetadata(ctx, "last_full_sync", "2024-02-01T00:00:00Z")
+	})
+	if err != nil {
+		t.Fatalf("Rebuild: %v", err)
+	}
+
+	// ListMachines only returns machines that have been played, so query the
+	// machines table directly to see the full post-rebuild set.
+	machines, err := s.GetMachineNames(ctx)
+	if err != nil {
+		t.Fatalf("GetMachineNames: %v", err)
+	}
+	if diff := cmp.Diff(map[string]string{"AFM": "Attack from Mars"}, machines); diff != "" {
+		t.Errorf("GetMachineNames() after rebuild: -want, +got:\n%s", diff)
+	}
+
+	teams, err := s.ListTeams(ctx, "")
+	if err != nil {
+		t.Fatalf("ListTeams: %v", err)
+	}
+	if diff := cmp.Diff([]TeamSummary(nil), teams); diff != "" {
+		t.Errorf("ListTeams() after rebuild: -want, +got:\n%s", diff)
+	}
+
+	// Metadata set inside the transaction is committed with the rebuild.
+	full, err := s.GetMetadata(ctx, "last_full_sync")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if diff := cmp.Diff("2024-02-01T00:00:00Z", full); diff != "" {
+		t.Errorf("GetMetadata(last_full_sync) after rebuild: -want, +got:\n%s", diff)
+	}
+
+	// Metadata written before the rebuild survives it: clearData leaves
+	// sync_metadata intact.
+	prior, err := s.GetMetadata(ctx, "mnp_last_sync")
+	if err != nil {
+		t.Fatalf("GetMetadata: %v", err)
+	}
+	if diff := cmp.Diff("2024-01-15T00:00:00Z", prior); diff != "" {
+		t.Errorf("GetMetadata(mnp_last_sync) after rebuild: -want, +got:\n%s", diff)
+	}
+}
+
+func TestRebuildRollback(t *testing.T) {
+	s, _ := newTestStore(t)
+	ctx := context.Background()
+
+	// An fn that writes and then fails must leave the database exactly as it
+	// was: neither the clear nor its own write may persist.
+	wantErr := errors.New("boom")
+	err := s.Rebuild(ctx, func(tx *SQLiteStore) error {
+		if err := tx.UpsertMachine(ctx, Machine{Key: "AFM", Name: "Attack from Mars"}); err != nil {
+			return err
+		}
+		return wantErr
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("Rebuild error: want %v, got %v", wantErr, err)
+	}
+
+	machines, err := s.GetMachineNames(ctx)
+	if err != nil {
+		t.Fatalf("GetMachineNames: %v", err)
+	}
+	want := map[string]string{
+		"TAF": "The Addams Family",
+		"TZ":  "Twilight Zone",
+		"MM":  "Medieval Madness",
+	}
+	if diff := cmp.Diff(want, machines); diff != "" {
+		t.Errorf("GetMachineNames() after failed rebuild: -want, +got:\n%s", diff)
 	}
 }
 
