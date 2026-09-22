@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/mnp"
@@ -28,8 +29,9 @@ func Dir() string {
 // DB provides access to an MNP database.
 // It lazily opens the database on first use.
 type DB struct {
-	ArchiveURL string `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL."`
-	ForceSync  bool   `help:"Sync data before running command."                      name:"sync"                      short:"s"`
+	ArchiveURL       string        `default:"https://github.com/Invader-Zim/mnp-data-archive.git" help:"MNP archive git repo URL."`
+	ForceSync        bool          `help:"Sync data before running command."                      name:"sync"                                                                                                    short:"s"`
+	FullSyncInterval time.Duration `default:"24h"                                                 help:"How long between full database rebuilds, which drop teams, venues and players removed from the archive."`
 
 	log   *slog.Logger
 	store *db.SQLiteStore
@@ -102,6 +104,7 @@ func (d *DB) Sync(ctx context.Context) error {
 		mnp.WithRepoURL(d.ArchiveURL),
 		mnp.WithLogger(d.log),
 		mnp.WithStore(d.store),
+		mnp.WithFullSyncInterval(d.FullSyncInterval),
 	)
 
 	return mnpClient.SyncIfStale(ctx, d.ForceSync)

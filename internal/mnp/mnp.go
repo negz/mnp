@@ -12,14 +12,37 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-git/go-git/v5"
+
+	"github.com/negz/mnp/internal/db"
 )
 
 const (
 	// RolePlayer is the default roster role.
 	RolePlayer = "P"
+
+	// defaultFullSyncInterval is how long between full rebuilds of the
+	// database. Incremental syncs keep the current season fresh; a full
+	// rebuild additionally drops teams, venues and players that have left the
+	// archive's snapshots.
+	defaultFullSyncInterval = 24 * time.Hour
+
+	// lastFullSyncKey is the sync_metadata key holding the RFC3339 time of the
+	// last successful full rebuild.
+	lastFullSyncKey = "last_full_sync"
 )
+
+// A ClientStore loads MNP data and can rebuild itself from scratch. It extends
+// the ETL Store with the transaction and metadata operations the sync loop
+// needs.
+type ClientStore interface {
+	Store
+	Rebuild(ctx context.Context, fn func(tx *db.SQLiteStore) error) error
+	GetMetadata(ctx context.Context, key string) (string, error)
+	SetMetadata(ctx context.Context, key, value string) error
+}
 
 // ClientOption configures a Client.
 type ClientOption func(*Client)
@@ -39,31 +62,43 @@ func WithLogger(l *slog.Logger) ClientOption {
 }
 
 // WithStore sets the store for loading MNP data.
-func WithStore(s Store) ClientOption {
+func WithStore(s ClientStore) ClientOption {
 	return func(c *Client) {
 		c.store = s
 	}
 }
 
+// WithFullSyncInterval sets how long between full rebuilds of the database. A
+// zero or negative interval makes every sync a full rebuild.
+func WithFullSyncInterval(d time.Duration) ClientOption {
+	return func(c *Client) {
+		c.fullSyncInterval = d
+	}
+}
+
 // Client syncs and loads MNP archive data.
 type Client struct {
-	archivePath string
-	repoURL     string
-	log         *slog.Logger
-	store       Store
+	archivePath      string
+	repoURL          string
+	log              *slog.Logger
+	store            ClientStore
+	fullSyncInterval time.Duration
 }
 
 // NewClient creates a new MNP archive client.
 func NewClient(archivePath string, opts ...ClientOption) *Client {
-	c := &Client{archivePath: archivePath}
+	c := &Client{archivePath: archivePath, fullSyncInterval: defaultFullSyncInterval}
 	for _, o := range opts {
 		o(c)
 	}
 	return c
 }
 
-// SyncIfStale syncs the git repo and loads any seasons that need updating.
-// A season needs loading if: forced, not yet loaded, or is the current (max) season.
+// SyncIfStale syncs the git repo and loads data that needs updating. It runs a
+// full rebuild when forced or when the last one is older than the full sync
+// interval, dropping teams, venues and players no longer in the archive.
+// Otherwise it loads incrementally: any season not yet loaded, plus the current
+// (max) season, which upserts fresh results without removing departed rows.
 func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 	if c.store == nil {
 		return fmt.Errorf("no store configured")
@@ -71,11 +106,6 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 
 	if err := c.pull(ctx); err != nil {
 		return fmt.Errorf("sync MNP archive: %w", err)
-	}
-
-	loaded, err := c.store.LoadedSeasons(ctx)
-	if err != nil {
-		return fmt.Errorf("check loaded seasons: %w", err)
 	}
 
 	available, err := findSeasons(c.archivePath)
@@ -86,10 +116,64 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 		return nil
 	}
 
+	full, err := c.needsFullSync(ctx, force)
+	if err != nil {
+		return err
+	}
+	if full {
+		return c.fullSync(ctx, available)
+	}
+
+	return c.incrementalSync(ctx, available)
+}
+
+// needsFullSync reports whether the next sync should be a full rebuild. It is
+// when forced, when no full sync has run, or when the last one is older than
+// the full sync interval.
+func (c *Client) needsFullSync(ctx context.Context, force bool) (bool, error) {
+	if force || c.fullSyncInterval <= 0 {
+		return true, nil
+	}
+	last, err := c.store.GetMetadata(ctx, lastFullSyncKey)
+	if err != nil {
+		return false, fmt.Errorf("check last full sync: %w", err)
+	}
+	if t, terr := time.Parse(time.RFC3339, last); terr == nil {
+		return time.Since(t) >= c.fullSyncInterval, nil
+	}
+	// A missing or corrupt timestamp shouldn't wedge syncing; rebuild, which
+	// rewrites it.
+	return true, nil
+}
+
+// fullSync rebuilds the database from scratch, loading every season, so that
+// data removed from the archive's snapshots disappears. It runs in a single
+// transaction, so readers keep seeing the previous data until it completes.
+func (c *Client) fullSync(ctx context.Context, seasons []int) error {
+	c.log.Info("Running full sync", "seasons", len(seasons))
+	return c.store.Rebuild(ctx, func(tx *db.SQLiteStore) error {
+		if err := c.extractAndLoad(ctx, tx, seasons); err != nil {
+			return err
+		}
+		if err := tx.SetMetadata(ctx, lastFullSyncKey, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return fmt.Errorf("record full sync: %w", err)
+		}
+		return nil
+	})
+}
+
+// incrementalSync loads any unloaded season plus the current one, upserting
+// into the existing database.
+func (c *Client) incrementalSync(ctx context.Context, available []int) error {
+	loaded, err := c.store.LoadedSeasons(ctx)
+	if err != nil {
+		return fmt.Errorf("check loaded seasons: %w", err)
+	}
+
 	maxSeason := available[len(available)-1]
 	var seasons []int
 	for _, s := range available {
-		if force || !loaded[s] || s == maxSeason {
+		if !loaded[s] || s == maxSeason {
 			seasons = append(seasons, s)
 		}
 	}
@@ -97,22 +181,18 @@ func (c *Client) SyncIfStale(ctx context.Context, force bool) error {
 		return nil
 	}
 
-	if err := c.extractAndLoad(ctx, seasons); err != nil {
-		return err
-	}
-
-	return nil
+	return c.extractAndLoad(ctx, c.store, seasons)
 }
 
 // extractAndLoad reads JSON files from the archive and loads them into the
 // store using the ETL types.
-func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
+func (c *Client) extractAndLoad(ctx context.Context, store Store, seasons []int) error {
 	// Machines.
 	var machines Machines
 	if err := machines.Extract(filepath.Join(c.archivePath, "machines.json")); err != nil {
 		return fmt.Errorf("extract machines: %w", err)
 	}
-	if err := machines.Load(ctx, c.store); err != nil {
+	if err := machines.Load(ctx, store); err != nil {
 		return fmt.Errorf("load machines: %w", err)
 	}
 
@@ -121,7 +201,7 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 	if err := venues.Extract(filepath.Join(c.archivePath, "venues.json")); err != nil {
 		return fmt.Errorf("extract venues: %w", err)
 	}
-	if err := venues.Load(ctx, c.store); err != nil {
+	if err := venues.Load(ctx, store); err != nil {
 		return fmt.Errorf("load venues: %w", err)
 	}
 
@@ -130,7 +210,7 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 	if err := iprs.Extract(filepath.Join(c.archivePath, "IPR.csv")); err != nil {
 		return fmt.Errorf("extract IPRs: %w", err)
 	}
-	if err := iprs.Load(ctx, c.store); err != nil {
+	if err := iprs.Load(ctx, store); err != nil {
 		return fmt.Errorf("load IPRs: %w", err)
 	}
 
@@ -143,7 +223,7 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 		if err := season.Extract(filepath.Join(seasonPath, "season.json")); err != nil {
 			return fmt.Errorf("extract season %d: %w", seasonNum, err)
 		}
-		seasonID, err := season.Load(ctx, c.store, seasonNum)
+		seasonID, err := season.Load(ctx, store, seasonNum)
 		if err != nil {
 			return fmt.Errorf("load season %d: %w", seasonNum, err)
 		}
@@ -152,7 +232,7 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 		if err := schedule.Extract(filepath.Join(seasonPath, "season.json")); err != nil {
 			return fmt.Errorf("extract schedule %d: %w", seasonNum, err)
 		}
-		if err := schedule.Load(ctx, c.store, seasonID); err != nil {
+		if err := schedule.Load(ctx, store, seasonID); err != nil {
 			return fmt.Errorf("load schedule %d: %w", seasonNum, err)
 		}
 
@@ -166,7 +246,7 @@ func (c *Client) extractAndLoad(ctx context.Context, seasons []int) error {
 				c.log.Warn("Failed to extract match", "file", filepath.Base(path), "error", err)
 				continue
 			}
-			if err := match.Load(ctx, c.store, seasonID); err != nil {
+			if err := match.Load(ctx, store, seasonID); err != nil {
 				c.log.Warn("Failed to load match", "file", filepath.Base(path), "error", err)
 			}
 		}
