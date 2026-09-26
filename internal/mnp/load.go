@@ -19,10 +19,12 @@ import (
 type Store interface { //nolint:interfacebloat // Maps 1:1 to the store operations the ETL performs.
 	UpsertMachine(ctx context.Context, m db.Machine) error
 	UpsertVenue(ctx context.Context, key, name string) (int64, error)
+	DeleteVenueMachines(ctx context.Context, venueID int64) error
 	UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error
 	UpsertSeason(ctx context.Context, number int) (int64, error)
 	UpsertTeam(ctx context.Context, t db.Team) (int64, error)
 	UpsertPlayer(ctx context.Context, name string) (int64, error)
+	DeleteTeamRoster(ctx context.Context, teamID int64) error
 	UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error
 	UpsertMatch(ctx context.Context, m db.Match) (int64, error)
 	InsertGame(ctx context.Context, g db.Game) (int64, error)
@@ -113,6 +115,9 @@ func (v *Venues) Load(ctx context.Context, s Store) error {
 		if err != nil {
 			return fmt.Errorf("upsert venue %s: %w", vd.Key, err)
 		}
+		if err := s.DeleteVenueMachines(ctx, venueID); err != nil {
+			return fmt.Errorf("delete venue machines %s: %w", vd.Key, err)
+		}
 		for _, mk := range vd.Machines {
 			if !knownMachines[mk] {
 				continue
@@ -201,6 +206,10 @@ func (s *Season) Load(ctx context.Context, st Store, seasonNum int) (int64, erro
 		})
 		if err != nil {
 			return 0, fmt.Errorf("upsert team %s: %w", t.Key, err)
+		}
+
+		if err := st.DeleteTeamRoster(ctx, teamID); err != nil {
+			return 0, fmt.Errorf("delete roster for team %s: %w", t.Key, err)
 		}
 
 		for _, name := range t.Roster {

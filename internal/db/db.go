@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS venue_machines (
     PRIMARY KEY (venue_id, machine_key)
 );
 
--- Rosters (player-team membership)
+-- Rosters (player-team membership, replaced per team on each sync)
 CREATE TABLE IF NOT EXISTS rosters (
     player_id INTEGER NOT NULL REFERENCES players(id),
     team_id INTEGER NOT NULL REFERENCES teams(id),

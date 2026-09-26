@@ -657,6 +657,58 @@ func TestGetVenueMachines(t *testing.T) {
 	}
 }
 
+func TestDeleteVenueMachines(t *testing.T) {
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.DeleteVenueMachines(ctx, f.stnID); err != nil {
+		t.Fatalf("DeleteVenueMachines: %v", err)
+	}
+
+	// STN's machines should be gone; GPA's should be untouched.
+	got, err := s.GetVenueMachines(ctx, "STN")
+	if err != nil {
+		t.Fatalf("GetVenueMachines STN: %v", err)
+	}
+	if diff := cmp.Diff(map[string]bool{}, got); diff != "" {
+		t.Errorf("GetVenueMachines STN after delete: -want, +got:\n%s", diff)
+	}
+
+	got, err = s.GetVenueMachines(ctx, "GPA")
+	if err != nil {
+		t.Fatalf("GetVenueMachines GPA: %v", err)
+	}
+	if diff := cmp.Diff(map[string]bool{"MM": true, "TZ": true}, got); diff != "" {
+		t.Errorf("GetVenueMachines GPA after delete: -want, +got:\n%s", diff)
+	}
+}
+
+func TestDeleteTeamRoster(t *testing.T) {
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.DeleteTeamRoster(ctx, f.tttID); err != nil {
+		t.Fatalf("DeleteTeamRoster: %v", err)
+	}
+
+	roster := func(teamID int64) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM rosters WHERE team_id = ?", teamID).Scan(&n); err != nil {
+			t.Fatalf("count roster: %v", err)
+		}
+		return n
+	}
+
+	// TTT's roster should be gone; KNR's should be untouched.
+	if diff := cmp.Diff(0, roster(f.tttID)); diff != "" {
+		t.Errorf("TTT roster count after delete: -want, +got:\n%s", diff)
+	}
+	if diff := cmp.Diff(2, roster(f.knrID)); diff != "" {
+		t.Errorf("KNR roster count after delete: -want, +got:\n%s", diff)
+	}
+}
+
 func TestGetMachineNames(t *testing.T) {
 	s, _ := newTestStore(t)
 	ctx := context.Background()

@@ -14,21 +14,23 @@ import (
 )
 
 type MockStore struct {
-	MockUpsertMachine      func(ctx context.Context, m db.Machine) error
-	MockUpsertVenue        func(ctx context.Context, key, name string) (int64, error)
-	MockUpsertVenueMachine func(ctx context.Context, venueID int64, machineKey string) error
-	MockUpsertSeason       func(ctx context.Context, number int) (int64, error)
-	MockUpsertTeam         func(ctx context.Context, t db.Team) (int64, error)
-	MockUpsertPlayer       func(ctx context.Context, name string) (int64, error)
-	MockUpsertRoster       func(ctx context.Context, playerID, teamID int64, role string) error
-	MockUpsertMatch        func(ctx context.Context, m db.Match) (int64, error)
-	MockInsertGame         func(ctx context.Context, g db.Game) (int64, error)
-	MockInsertGameResult   func(ctx context.Context, r db.GameResult) error
-	MockDeleteMatchGames   func(ctx context.Context, matchID int64) error
-	MockGetTeamID          func(ctx context.Context, key string, seasonID int64) (int64, error)
-	MockListMachineKeys    func(ctx context.Context) (map[string]bool, error)
-	MockLoadedSeasons      func(ctx context.Context) (map[int]bool, error)
-	MockUpsertPlayerIPR    func(ctx context.Context, name string, ipr int) error
+	MockUpsertMachine       func(ctx context.Context, m db.Machine) error
+	MockUpsertVenue         func(ctx context.Context, key, name string) (int64, error)
+	MockDeleteVenueMachines func(ctx context.Context, venueID int64) error
+	MockUpsertVenueMachine  func(ctx context.Context, venueID int64, machineKey string) error
+	MockUpsertSeason        func(ctx context.Context, number int) (int64, error)
+	MockUpsertTeam          func(ctx context.Context, t db.Team) (int64, error)
+	MockUpsertPlayer        func(ctx context.Context, name string) (int64, error)
+	MockDeleteTeamRoster    func(ctx context.Context, teamID int64) error
+	MockUpsertRoster        func(ctx context.Context, playerID, teamID int64, role string) error
+	MockUpsertMatch         func(ctx context.Context, m db.Match) (int64, error)
+	MockInsertGame          func(ctx context.Context, g db.Game) (int64, error)
+	MockInsertGameResult    func(ctx context.Context, r db.GameResult) error
+	MockDeleteMatchGames    func(ctx context.Context, matchID int64) error
+	MockGetTeamID           func(ctx context.Context, key string, seasonID int64) (int64, error)
+	MockListMachineKeys     func(ctx context.Context) (map[string]bool, error)
+	MockLoadedSeasons       func(ctx context.Context) (map[int]bool, error)
+	MockUpsertPlayerIPR     func(ctx context.Context, name string, ipr int) error
 }
 
 func (m *MockStore) UpsertMachine(ctx context.Context, machine db.Machine) error {
@@ -37,6 +39,10 @@ func (m *MockStore) UpsertMachine(ctx context.Context, machine db.Machine) error
 
 func (m *MockStore) UpsertVenue(ctx context.Context, key, name string) (int64, error) {
 	return m.MockUpsertVenue(ctx, key, name)
+}
+
+func (m *MockStore) DeleteVenueMachines(ctx context.Context, venueID int64) error {
+	return m.MockDeleteVenueMachines(ctx, venueID)
 }
 
 func (m *MockStore) UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error {
@@ -53,6 +59,10 @@ func (m *MockStore) UpsertTeam(ctx context.Context, t db.Team) (int64, error) {
 
 func (m *MockStore) UpsertPlayer(ctx context.Context, name string) (int64, error) {
 	return m.MockUpsertPlayer(ctx, name)
+}
+
+func (m *MockStore) DeleteTeamRoster(ctx context.Context, teamID int64) error {
+	return m.MockDeleteTeamRoster(ctx, teamID)
 }
 
 func (m *MockStore) UpsertRoster(ctx context.Context, playerID, teamID int64, role string) error {
@@ -206,6 +216,12 @@ func TestVenuesLoad(t *testing.T) {
 						}
 						return 1, nil
 					},
+					MockDeleteVenueMachines: func(_ context.Context, venueID int64) error {
+						if diff := cmp.Diff(int64(1), venueID); diff != "" {
+							t.Errorf("DeleteVenueMachines venueID: -want, +got:\n%s", diff)
+						}
+						return nil
+					},
 					MockUpsertVenueMachine: func(_ context.Context, venueID int64, machineKey string) error {
 						if diff := cmp.Diff(int64(1), venueID); diff != "" {
 							t.Errorf("UpsertVenueMachine venueID: -want, +got:\n%s", diff)
@@ -263,7 +279,30 @@ func TestVenuesLoad(t *testing.T) {
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
 						return 1, nil
 					},
+					MockDeleteVenueMachines: func(_ context.Context, _ int64) error {
+						return nil
+					},
 					MockUpsertVenueMachine: func(_ context.Context, _ int64, _ string) error {
+						return errors.New("boom")
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+		"DeleteVenueMachinesError": {
+			reason: "An error deleting a venue's stale machines should be returned.",
+			args: args{
+				venues: Venues{raw: map[string]venueRawJSON{
+					"add": {Key: "ADD", Name: "Add-a-Ball", Machines: []string{"TAF"}},
+				}},
+				store: &MockStore{
+					MockListMachineKeys: func(_ context.Context) (map[string]bool, error) {
+						return map[string]bool{"TAF": true}, nil
+					},
+					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+						return 1, nil
+					},
+					MockDeleteVenueMachines: func(_ context.Context, _ int64) error {
 						return errors.New("boom")
 					},
 				},
@@ -280,6 +319,39 @@ func TestVenuesLoad(t *testing.T) {
 				t.Errorf("\n%s\nVenues.Load(...): -want error, +got error:\n%s", tc.reason, diff)
 			}
 		})
+	}
+}
+
+// TestVenuesLoadReplacesMachines proves Load clears a venue's existing machines
+// before inserting its current ones, so a machine that has left the venue is
+// dropped. The order slice fails if the delete is removed or moved after insert.
+func TestVenuesLoadReplacesMachines(t *testing.T) {
+	var order []string
+	venues := Venues{raw: map[string]venueRawJSON{
+		"add": {Key: "ADD", Name: "Add-a-Ball", Machines: []string{"TAF"}},
+	}}
+	store := &MockStore{
+		MockListMachineKeys: func(_ context.Context) (map[string]bool, error) {
+			return map[string]bool{"TAF": true}, nil
+		},
+		MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
+			return 1, nil
+		},
+		MockDeleteVenueMachines: func(_ context.Context, _ int64) error {
+			order = append(order, "delete")
+			return nil
+		},
+		MockUpsertVenueMachine: func(_ context.Context, _ int64, _ string) error {
+			order = append(order, "insert")
+			return nil
+		},
+	}
+
+	if err := venues.Load(context.Background(), store); err != nil {
+		t.Fatalf("Venues.Load(...): %v", err)
+	}
+	if diff := cmp.Diff([]string{"delete", "insert"}, order); diff != "" {
+		t.Errorf("Venues.Load(...) delete/insert order: -want, +got:\n%s", diff)
 	}
 }
 
@@ -341,6 +413,12 @@ func TestSeasonLoad(t *testing.T) {
 						}
 						return 50, nil
 					},
+					MockDeleteTeamRoster: func(_ context.Context, teamID int64) error {
+						if diff := cmp.Diff(int64(50), teamID); diff != "" {
+							t.Errorf("DeleteTeamRoster teamID: -want, +got:\n%s", diff)
+						}
+						return nil
+					},
 					MockUpsertPlayer: func(_ context.Context, name string) (int64, error) {
 						if diff := cmp.Diff("Alice", name); diff != "" {
 							t.Errorf("UpsertPlayer name: -want, +got:\n%s", diff)
@@ -382,6 +460,9 @@ func TestSeasonLoad(t *testing.T) {
 					},
 					MockUpsertTeam: func(_ context.Context, _ db.Team) (int64, error) {
 						return 50, nil
+					},
+					MockDeleteTeamRoster: func(_ context.Context, _ int64) error {
+						return nil
 					},
 				},
 			},
@@ -464,6 +545,9 @@ func TestSeasonLoad(t *testing.T) {
 					MockUpsertTeam: func(_ context.Context, _ db.Team) (int64, error) {
 						return 50, nil
 					},
+					MockDeleteTeamRoster: func(_ context.Context, _ int64) error {
+						return nil
+					},
 					MockUpsertPlayer: func(_ context.Context, _ string) (int64, error) {
 						return 0, errors.New("boom")
 					},
@@ -495,10 +579,36 @@ func TestSeasonLoad(t *testing.T) {
 					MockUpsertTeam: func(_ context.Context, _ db.Team) (int64, error) {
 						return 50, nil
 					},
+					MockDeleteTeamRoster: func(_ context.Context, _ int64) error {
+						return nil
+					},
 					MockUpsertPlayer: func(_ context.Context, _ string) (int64, error) {
 						return 200, nil
 					},
 					MockUpsertRoster: func(_ context.Context, _, _ int64, _ string) error {
+						return errors.New("boom")
+					},
+				},
+			},
+			want: want{err: cmpopts.AnyError},
+		},
+		"DeleteTeamRosterError": {
+			reason: "An error deleting a team's stale roster should be returned.",
+			args: args{
+				seasonNum: 25,
+				season: Season{raw: seasonRawJSON{
+					Teams: map[string]teamSeasonJSON{
+						"cra": {Key: "CRA", Name: "Crazies"},
+					},
+				}},
+				store: &MockStore{
+					MockUpsertSeason: func(_ context.Context, _ int) (int64, error) {
+						return 100, nil
+					},
+					MockUpsertTeam: func(_ context.Context, _ db.Team) (int64, error) {
+						return 50, nil
+					},
+					MockDeleteTeamRoster: func(_ context.Context, _ int64) error {
 						return errors.New("boom")
 					},
 				},
@@ -518,6 +628,52 @@ func TestSeasonLoad(t *testing.T) {
 				t.Errorf("\n%s\nSeason.Load(...): -want seasonID, +got seasonID:\n%s", tc.reason, diff)
 			}
 		})
+	}
+}
+
+// TestSeasonLoadReplacesRoster proves Load clears a team's existing roster
+// before inserting its current one, so a player who has left the team is
+// dropped. The order slice fails if the delete is removed or moved after insert.
+func TestSeasonLoadReplacesRoster(t *testing.T) {
+	var order []string
+	season := Season{raw: seasonRawJSON{
+		Teams: map[string]teamSeasonJSON{
+			"cra": {
+				Key:  "CRA",
+				Name: "Crazies",
+				Roster: []struct {
+					Name string `json:"name"`
+				}{
+					{Name: "Alice"},
+				},
+			},
+		},
+	}}
+	store := &MockStore{
+		MockUpsertSeason: func(_ context.Context, _ int) (int64, error) {
+			return 100, nil
+		},
+		MockUpsertTeam: func(_ context.Context, _ db.Team) (int64, error) {
+			return 50, nil
+		},
+		MockDeleteTeamRoster: func(_ context.Context, _ int64) error {
+			order = append(order, "delete")
+			return nil
+		},
+		MockUpsertPlayer: func(_ context.Context, _ string) (int64, error) {
+			return 200, nil
+		},
+		MockUpsertRoster: func(_ context.Context, _, _ int64, _ string) error {
+			order = append(order, "insert")
+			return nil
+		},
+	}
+
+	if _, err := season.Load(context.Background(), store, 25); err != nil {
+		t.Fatalf("Season.Load(...): %v", err)
+	}
+	if diff := cmp.Diff([]string{"delete", "insert"}, order); diff != "" {
+		t.Errorf("Season.Load(...) delete/insert order: -want, +got:\n%s", diff)
 	}
 }
 

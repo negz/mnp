@@ -122,6 +122,16 @@ func (s *SQLiteStore) UpsertTeam(ctx context.Context, t Team) (int64, error) {
 	return id, nil
 }
 
+// DeleteVenueMachines removes all machine associations for a venue. The archive
+// lists each venue's current machines, so callers delete before re-inserting to
+// drop machines that have since left the venue.
+func (s *SQLiteStore) DeleteVenueMachines(ctx context.Context, venueID int64) error {
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM venue_machines WHERE venue_id = ?", venueID); err != nil {
+		return fmt.Errorf("delete venue machines: %w", err)
+	}
+	return nil
+}
+
 // UpsertVenueMachine associates a machine with a venue.
 func (s *SQLiteStore) UpsertVenueMachine(ctx context.Context, venueID int64, machineKey string) error {
 	if _, err := s.db.ExecContext(ctx, `
@@ -161,6 +171,16 @@ func (s *SQLiteStore) GetVenueMachines(ctx context.Context, venueKey string) (ma
 	}
 
 	return result, nil
+}
+
+// DeleteTeamRoster removes all roster entries for a team. The archive lists each
+// team's current roster, so callers delete before re-inserting to drop players
+// who have since left the team.
+func (s *SQLiteStore) DeleteTeamRoster(ctx context.Context, teamID int64) error {
+	if _, err := s.db.ExecContext(ctx, "DELETE FROM rosters WHERE team_id = ?", teamID); err != nil {
+		return fmt.Errorf("delete team roster: %w", err)
+	}
+	return nil
 }
 
 // UpsertRoster adds a player to a team roster.
