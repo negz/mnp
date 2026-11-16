@@ -439,7 +439,7 @@ func (m *Match) Transform() MatchData {
 				Round:      r.N,
 				MachineKey: g.Machine,
 				IsDoubles:  isDoubles,
-				Results:    buildResults(g, playerNames, isDoubles),
+				Results:    buildResults(g, playerNames, r.N, isDoubles),
 			})
 		}
 	}
@@ -456,9 +456,9 @@ func (m *Match) Transform() MatchData {
 }
 
 // buildResults constructs player results for a game, resolving hashes to names.
-// In doubles (rounds 1,4): players 1,3 are away team, 2,4 are home team.
-// In singles (rounds 2,3): player 1 is away, player 2 is home.
-func buildResults(g gameJSON, playerNames map[string]string, isDoubles bool) []ResultData {
+// The team that picked the machine plays as player 1 (and 3 in doubles). The
+// away team picks rounds 1 and 3, and the home team picks rounds 2 and 4.
+func buildResults(g gameJSON, playerNames map[string]string, round int, isDoubles bool) []ResultData {
 	type raw struct {
 		hash   string
 		score  int64
@@ -466,14 +466,15 @@ func buildResults(g gameJSON, playerNames map[string]string, isDoubles bool) []R
 		isHome bool
 	}
 
+	homePicked := round == 2 || round == 4
 	raws := []raw{
-		{hash: g.Player1, score: g.Score1, pos: 1, isHome: false},
-		{hash: g.Player2, score: g.Score2, pos: 2, isHome: true},
+		{hash: g.Player1, score: g.Score1, pos: 1, isHome: homePicked},
+		{hash: g.Player2, score: g.Score2, pos: 2, isHome: !homePicked},
 	}
 	if isDoubles {
 		raws = append(raws,
-			raw{hash: g.Player3, score: g.Score3, pos: 3, isHome: false},
-			raw{hash: g.Player4, score: g.Score4, pos: 4, isHome: true},
+			raw{hash: g.Player3, score: g.Score3, pos: 3, isHome: homePicked},
+			raw{hash: g.Player4, score: g.Score4, pos: 4, isHome: !homePicked},
 		)
 	}
 

@@ -532,7 +532,7 @@ func TestMatchLoad(t *testing.T) {
 		err error
 	}
 
-	singlesMatch := Match{raw: matchRawJSON{
+	testMatch := Match{raw: matchRawJSON{
 		Key:   "match-1",
 		Week:  "3",
 		Date:  "2024-01-15",
@@ -540,14 +540,32 @@ func TestMatchLoad(t *testing.T) {
 		Home: teamMatchJSON{
 			Key:    "CRA",
 			Name:   "Crazies",
-			Lineup: []lineupJSON{{Key: "h1", Name: "Alice"}},
+			Lineup: []lineupJSON{{Key: "h1", Name: "Alice"}, {Key: "h2", Name: "Carol"}},
 		},
 		Away: teamMatchJSON{
 			Key:    "PIN",
 			Name:   "Pinheads",
-			Lineup: []lineupJSON{{Key: "a1", Name: "Bob"}},
+			Lineup: []lineupJSON{{Key: "a1", Name: "Bob"}, {Key: "a2", Name: "Dave"}},
 		},
 		Rounds: []roundJSON{
+			{
+				N: 1,
+				Games: []gameJSON{
+					{
+						N:       1,
+						Machine: "TZ",
+						Done:    true,
+						Player1: "a1",
+						Player2: "h1",
+						Player3: "a2",
+						Player4: "h2",
+						Score1:  4_000_000,
+						Score2:  3_000_000,
+						Score3:  2_000_000,
+						Score4:  1_000_000,
+					},
+				},
+			},
 			{
 				N: 2,
 				Games: []gameJSON{
@@ -555,10 +573,42 @@ func TestMatchLoad(t *testing.T) {
 						N:       1,
 						Machine: "TAF",
 						Done:    true,
-						Player1: "a1",
-						Player2: "h1",
+						Player1: "h1",
+						Player2: "a1",
 						Score1:  50_000_000,
 						Score2:  30_000_000,
+					},
+				},
+			},
+			{
+				N: 3,
+				Games: []gameJSON{
+					{
+						N:       1,
+						Machine: "MM",
+						Done:    true,
+						Player1: "a1",
+						Player2: "h1",
+						Score1:  20_000_000,
+						Score2:  10_000_000,
+					},
+				},
+			},
+			{
+				N: 4,
+				Games: []gameJSON{
+					{
+						N:       1,
+						Machine: "AFM",
+						Done:    true,
+						Player1: "h1",
+						Player2: "a1",
+						Player3: "h2",
+						Player4: "a2",
+						Score1:  400,
+						Score2:  300,
+						Score3:  200,
+						Score4:  100,
 					},
 				},
 			},
@@ -571,9 +621,9 @@ func TestMatchLoad(t *testing.T) {
 		want   want
 	}{
 		"Success": {
-			reason: "A match with one singles game should transform and load with the correct venue, teams, match, game, and player result data.",
+			reason: "A match with singles and doubles games picked by each team should transform and load with the correct venue, teams, match, games, and player result data.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, key, name string) (int64, error) {
@@ -616,16 +666,16 @@ func TestMatchLoad(t *testing.T) {
 						return nil
 					},
 					MockInsertGame: func(_ context.Context, got db.Game) (int64, error) {
-						want := db.Game{
-							MatchID:    500,
-							Round:      2,
-							MachineKey: "TAF",
-							IsDoubles:  false,
+						want := map[int]db.Game{
+							1: {MatchID: 500, Round: 1, MachineKey: "TZ", IsDoubles: true},
+							2: {MatchID: 500, Round: 2, MachineKey: "TAF", IsDoubles: false},
+							3: {MatchID: 500, Round: 3, MachineKey: "MM", IsDoubles: false},
+							4: {MatchID: 500, Round: 4, MachineKey: "AFM", IsDoubles: true},
 						}
-						if diff := cmp.Diff(want, got); diff != "" {
+						if diff := cmp.Diff(want[got.Round], got); diff != "" {
 							t.Errorf("InsertGame(...): -want, +got:\n%s", diff)
 						}
-						return 1000, nil
+						return int64(1000 + got.Round), nil
 					},
 					MockUpsertPlayer: func(_ context.Context, name string) (int64, error) {
 						switch name {
@@ -633,19 +683,40 @@ func TestMatchLoad(t *testing.T) {
 							return 201, nil
 						case "Alice":
 							return 200, nil
+						case "Carol":
+							return 202, nil
+						case "Dave":
+							return 203, nil
 						default:
 							t.Errorf("UpsertPlayer called with unexpected name %q", name)
 							return 0, nil
 						}
 					},
 					MockInsertGameResult: func(_ context.Context, got db.GameResult) error {
-						want := map[int]db.GameResult{
-							1: {GameID: 1000, PlayerID: 201, TeamID: 60, Position: 1, Score: 50_000_000},
-							2: {GameID: 1000, PlayerID: 200, TeamID: 50, Position: 2, Score: 30_000_000},
+						// The away team (PIN, 60) picks rounds 1 and 3, and the
+						// home team (CRA, 50) picks rounds 2 and 4. The picking
+						// team plays as players 1 and 3.
+						type key struct {
+							gameID   int64
+							position int
 						}
-						w, ok := want[got.Position]
+						want := map[key]db.GameResult{
+							{1002, 1}: {GameID: 1002, PlayerID: 200, TeamID: 50, Position: 1, Score: 50_000_000},
+							{1002, 2}: {GameID: 1002, PlayerID: 201, TeamID: 60, Position: 2, Score: 30_000_000},
+							{1003, 1}: {GameID: 1003, PlayerID: 201, TeamID: 60, Position: 1, Score: 20_000_000},
+							{1003, 2}: {GameID: 1003, PlayerID: 200, TeamID: 50, Position: 2, Score: 10_000_000},
+							{1001, 1}: {GameID: 1001, PlayerID: 201, TeamID: 60, Position: 1, Score: 4_000_000},
+							{1001, 2}: {GameID: 1001, PlayerID: 200, TeamID: 50, Position: 2, Score: 3_000_000},
+							{1001, 3}: {GameID: 1001, PlayerID: 203, TeamID: 60, Position: 3, Score: 2_000_000},
+							{1001, 4}: {GameID: 1001, PlayerID: 202, TeamID: 50, Position: 4, Score: 1_000_000},
+							{1004, 1}: {GameID: 1004, PlayerID: 200, TeamID: 50, Position: 1, Score: 400},
+							{1004, 2}: {GameID: 1004, PlayerID: 201, TeamID: 60, Position: 2, Score: 300},
+							{1004, 3}: {GameID: 1004, PlayerID: 202, TeamID: 50, Position: 3, Score: 200},
+							{1004, 4}: {GameID: 1004, PlayerID: 203, TeamID: 60, Position: 4, Score: 100},
+						}
+						w, ok := want[key{got.GameID, got.Position}]
 						if !ok {
-							t.Errorf("InsertGameResult called with unexpected position %d", got.Position)
+							t.Errorf("InsertGameResult called with unexpected game %d position %d", got.GameID, got.Position)
 							return nil
 						}
 						if diff := cmp.Diff(w, got); diff != "" {
@@ -688,7 +759,7 @@ func TestMatchLoad(t *testing.T) {
 		"UpsertVenueError": {
 			reason: "An error upserting a match venue should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -701,7 +772,7 @@ func TestMatchLoad(t *testing.T) {
 		"GetHomeTeamError": {
 			reason: "An error resolving the home team should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -720,7 +791,7 @@ func TestMatchLoad(t *testing.T) {
 		"GetAwayTeamError": {
 			reason: "An error resolving the away team should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -739,7 +810,7 @@ func TestMatchLoad(t *testing.T) {
 		"UpsertMatchError": {
 			reason: "An error upserting the match should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -758,7 +829,7 @@ func TestMatchLoad(t *testing.T) {
 		"DeleteMatchGamesError": {
 			reason: "An error deleting old match games should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -780,7 +851,7 @@ func TestMatchLoad(t *testing.T) {
 		"InsertGameError": {
 			reason: "An error inserting a game should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -805,7 +876,7 @@ func TestMatchLoad(t *testing.T) {
 		"UpsertPlayerError": {
 			reason: "An error upserting a player from game results should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
@@ -833,7 +904,7 @@ func TestMatchLoad(t *testing.T) {
 		"InsertGameResultError": {
 			reason: "An error inserting a game result should be returned.",
 			args: args{
-				match:    singlesMatch,
+				match:    testMatch,
 				seasonID: 100,
 				store: &MockStore{
 					MockUpsertVenue: func(_ context.Context, _, _ string) (int64, error) {
