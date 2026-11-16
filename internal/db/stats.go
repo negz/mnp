@@ -28,6 +28,8 @@ type LikelyPlayer struct {
 	Name     string
 	Games    int
 	P50Score float64
+	P90Score float64
+	IPR      int
 }
 
 // GetTeamMachineStats returns per-machine stats for a team's current roster.
@@ -35,7 +37,7 @@ type LikelyPlayer struct {
 // the team (latest season with that team key).
 // If venueKey is non-empty, filters to games played at that venue.
 // Results are ordered by play count descending (most-played machines first).
-// Top 2 players per machine (by P50) are included.
+// The 3 players with the most games on each machine are included.
 func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
 	stats, err := s.GetTeamMachineAgg(ctx, teamKey, venueKey)
 	if err != nil {
@@ -131,7 +133,7 @@ func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	return stats, nil
 }
 
-// GetTopPlayers returns the top 2 players by play count for each machine,
+// GetTopPlayers returns the top 3 players by play count for each machine,
 // keyed by machine key.
 func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]LikelyPlayer, error) {
 	query := `
@@ -183,7 +185,12 @@ func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey strin
 				 WHERE ps2.machine_key = ps1.machine_key
 				   AND ps2.player_id = ps1.player_id
 				   AND ps2.rn = (ps1.total + 1) / 2
-				) as p50
+				) as p50,
+				(SELECT score FROM player_scores ps2
+				 WHERE ps2.machine_key = ps1.machine_key
+				   AND ps2.player_id = ps1.player_id
+				   AND ps2.rn = (ps1.total * 9 + 9) / 10
+				) as p90
 			FROM player_scores ps1
 		),
 		ranked AS (
@@ -192,13 +199,15 @@ func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey strin
 				name,
 				games,
 				p50,
+				p90,
 				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY games DESC, p50 DESC) as rn
 			FROM player_agg
 		)
-		SELECT machine_key, name, games, p50
-		FROM ranked
-		WHERE rn <= 2
-		ORDER BY machine_key, rn
+		SELECT r.machine_key, r.name, r.games, r.p50, r.p90, COALESCE(ipr.ipr, 0)
+		FROM ranked r
+		LEFT JOIN player_iprs ipr ON ipr.name = r.name
+		WHERE r.rn <= 3
+		ORDER BY r.machine_key, r.rn
 	`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
@@ -209,17 +218,61 @@ func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey strin
 
 	result := make(map[string][]LikelyPlayer)
 	for rows.Next() {
-		var machineKey, name string
-		var games int
-		var p50 float64
-		if err := rows.Scan(&machineKey, &name, &games, &p50); err != nil {
+		var machineKey string
+		var lp LikelyPlayer
+		if err := rows.Scan(&machineKey, &lp.Name, &lp.Games, &lp.P50Score, &lp.P90Score, &lp.IPR); err != nil {
 			return nil, fmt.Errorf("scan top player: %w", err)
 		}
-		result[machineKey] = append(result[machineKey], LikelyPlayer{Name: name, Games: games, P50Score: p50})
+		result[machineKey] = append(result[machineKey], lp)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate top players: %w", err)
+	}
+
+	return result, nil
+}
+
+// GetRosterPicks returns how many games each machine was picked for by
+// players on a team's current roster, keyed by machine key. It counts picks
+// from every season, including those made while playing for other teams. The
+// picking team's players take positions 1 and 3.
+func (s *SQLiteStore) GetRosterPicks(ctx context.Context, teamKey string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		WITH current_roster AS (
+			SELECT DISTINCT r.player_id
+			FROM rosters r
+			JOIN teams t ON t.id = r.team_id
+			WHERE t.key = ?
+			  AND t.season_id = (
+				SELECT MAX(t2.season_id) FROM teams t2 WHERE t2.key = ?
+			  )
+		)
+		SELECT g.machine_key, COUNT(DISTINCT g.id)
+		FROM games g
+		JOIN game_results gr ON gr.game_id = g.id
+		WHERE gr.player_id IN (SELECT player_id FROM current_roster)
+		  AND gr.position % 2 = 1
+		  AND g.machine_key IS NOT NULL
+		GROUP BY g.machine_key
+	`, teamKey, teamKey)
+	if err != nil {
+		return nil, fmt.Errorf("query roster picks: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	result := make(map[string]int)
+	for rows.Next() {
+		var key string
+		var n int
+		if err := rows.Scan(&key, &n); err != nil {
+			return nil, fmt.Errorf("scan roster picks: %w", err)
+		}
+		result[key] = n
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate roster picks: %w", err)
 	}
 
 	return result, nil

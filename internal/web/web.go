@@ -8,7 +8,6 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -170,23 +169,10 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatScore(score)
 		},
-		"formatEdge": func(pct float64, team1, team2 string, conf matchup.Confidence) string {
-			if math.IsInf(pct, 0) || pct > 1e15 || pct < -1e15 {
-				if pct > 0 {
-					return team1
-				}
-				return team2
-			}
-			rounded := int(math.Round(pct))
-			icon := confidenceIcon(conf)
-			switch {
-			case rounded > 0:
-				return fmt.Sprintf("%s %d%% %s", team1, rounded, icon)
-			case rounded < 0:
-				return fmt.Sprintf("%s %d%% %s", team2, -rounded, icon)
-			default:
-				return "Even"
-			}
+		"formatEdge":  formatEdge,
+		"formatPicks": formatPicks,
+		"side": func(team, vs, machineKey string, players []matchup.LikelyPlayer) matchupSide {
+			return matchupSide{Team: team, Vs: vs, MachineKey: machineKey, Players: players}
 		},
 		"join": strings.Join,
 		"formatP50": func(p50, leagueP50 float64) string {
@@ -207,17 +193,46 @@ func newTemplateFuncs() template.FuncMap {
 	}
 }
 
-func confidenceIcon(c matchup.Confidence) string {
-	switch c {
-	case matchup.ConfidenceHigh:
-		return "▲"
-	case matchup.ConfidenceMedium:
-		return "△"
-	case matchup.ConfidenceLow:
-		return "▼"
-	default:
-		return "▼"
+// formatEdge describes how a machine is likely to go.
+func formatEdge(m matchup.MachineMatchup, team1, team2 string) string {
+	switch {
+	case m.Team2Likely == 0:
+		return team1 + " only"
+	case m.Team1Likely == 0:
+		return team2 + " only"
 	}
+	switch m.Verdict {
+	case matchup.VerdictDouble:
+		return m.Favorite + " likely double"
+	case matchup.VerdictWin:
+		return m.Favorite + " likely win"
+	case matchup.VerdictEven:
+		return "Even"
+	case matchup.VerdictUnknown:
+	}
+	switch {
+	case m.Team1Confidence == matchup.ConfidenceLow && m.Team2Confidence == matchup.ConfidenceLow:
+		return "Not enough data"
+	case m.Team1Confidence == matchup.ConfidenceLow:
+		return "Not enough " + team1 + " data"
+	default:
+		return "Not enough " + team2 + " data"
+	}
+}
+
+// formatPicks describes how often each team picked a machine.
+func formatPicks(m matchup.MachineMatchup, team1, team2 string) string {
+	var picks []string
+	if m.Team1Picks > 0 {
+		picks = append(picks, fmt.Sprintf("%s %d×", team1, m.Team1Picks))
+	}
+	if m.Team2Picks > 0 {
+		picks = append(picks, fmt.Sprintf("%s %d×", team2, m.Team2Picks))
+	}
+	if len(picks) == 0 {
+		return ""
+	}
+	return "Picked by " + strings.Join(picks, ", ")
 }
 
 func parseTemplates(pages ...string) *template.Template {
@@ -367,11 +382,25 @@ func filterMatches(matches []db.ScheduleMatch, team string) []db.ScheduleMatch {
 type matchupData struct {
 	Venues []db.Venue
 	Teams  []db.TeamSummary
-	Venue  string
-	Team1  string
-	Team2  string
+
+	Venue string
+	Team1 string
+	Team2 string
+
+	VenueName string
+	Team1Name string
+	Team2Name string
+
 	Result *matchup.Result
 	Error  string
+}
+
+// matchupSide is one team's view of a machine in a matchup.
+type matchupSide struct {
+	Team       string
+	Vs         string
+	MachineKey string
+	Players    []matchup.LikelyPlayer
 }
 
 func (s *Server) handleMatchup(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +426,23 @@ func (s *Server) handleMatchup(w http.ResponseWriter, r *http.Request) {
 		Venue:  r.URL.Query().Get("venue"),
 		Team1:  r.URL.Query().Get("t1"),
 		Team2:  r.URL.Query().Get("t2"),
+	}
+
+	data.VenueName = data.Venue
+	for _, v := range venues {
+		if v.Key == data.Venue {
+			data.VenueName = v.Name
+			break
+		}
+	}
+	data.Team1Name, data.Team2Name = data.Team1, data.Team2
+	for _, t := range teams {
+		switch t.Key {
+		case data.Team1:
+			data.Team1Name = t.Name
+		case data.Team2:
+			data.Team2Name = t.Name
+		}
 	}
 
 	if data.Venue != "" && data.Team1 != "" && data.Team2 != "" {

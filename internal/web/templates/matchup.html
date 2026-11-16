@@ -1,8 +1,6 @@
-{{define "title"}}MNP - Matchup{{end}}
+{{define "title"}}MNP - Matchup{{if .Result}} {{.Team1}} vs {{.Team2}}{{end}}{{end}}
 
-{{define "content"}}
-<h2>Matchup</h2>
-
+{{define "matchup-form"}}
 <form id="matchup-form" method="get" action="/matchup">
   <div class="grid">
     <label>
@@ -34,54 +32,68 @@
     </label>
   </div>
 </form>
+{{end}}
 
+{{define "matchup-side"}}
+<div>
+  <p><strong>{{.Team}}</strong></p>
+  {{if .Players}}
+  {{template "regulars" .Players}}
+  <p><small><a href="/t/{{.Team}}/recommend/{{.MachineKey}}?vs={{.Vs}}">Everyone on {{.Team}} →</a></small></p>
+  {{else}}
+  <p><small>No one on {{.Team}} has played this.</small></p>
+  {{end}}
+</div>
+{{end}}
+
+{{define "content"}}
 {{if .Result}}
+<hgroup class="title">
+  <h2><span>{{.Team1Name}}</span> <span><small>vs</small> {{.Team2Name}}</span></h2>
+  <p>{{.VenueName}}</p>
+</hgroup>
+
+<p class="toggle">Best machines for <strong>{{.Team1}}</strong> · <a href="/matchup?venue={{.Venue}}&t1={{.Team2}}&t2={{.Team1}}">{{.Team2}}</a></p>
+
+<section>
+  {{range .Result.Machines}}
+  <details class="row">
+    <summary>
+      <span class="row-title">{{.MachineName}}</span>
+      <span class="row-value">{{formatEdge . $.Team1 $.Team2}}</span>
+      <small class="row-sub">{{formatPicks . $.Team1 $.Team2}}</small>
+    </summary>
+    <div class="grid">
+      {{template "matchup-side" (side $.Team1 $.Team2 .MachineKey .Team1Players)}}
+      {{template "matchup-side" (side $.Team2 $.Team1 .MachineKey .Team2Players)}}
+    </div>
+  </details>
+  {{end}}
+</section>
+
 <details class="legend">
   <summary>How to read this</summary>
   <dl>
+    <dt>Likely double, likely win, even</dt><dd>How each team's top two regulars typically score against each other on this machine. Doubling your opponent's score wins a singles game 3–0.</dd>
+    <dt>Not enough data</dt><dd>A team's top two regulars have played this machine fewer than 3 times each on average.</dd>
+    <dt>Only</dt><dd>The other team hasn't played this machine.</dd>
+    <dt>Picked</dt><dd>Times the team's current players chose this machine, for any team, at any venue.</dd>
+    <dt>Regulars</dt><dd>Tap a machine to see the three players from each team who've played it the most.</dd>
     {{template "term-typical"}}
-    <dt>Regulars</dt><dd>The typical score of the two players who've played this machine the most.</dd>
-    <dt>Edge</dt><dd>How much higher one team's regulars typically score. ▲ means both teams' regulars average 10+ games on this machine, △ 3–9, and ▼ fewer than 3.</dd>
+    {{template "term-high"}}
+    {{template "term-ipr"}}
   </dl>
 </details>
 
-<table class="striped responsive">
-  <thead>
-    <tr>
-      <th>Machine</th>
-      <th>{{.Team1}} Typical</th>
-      <th>{{.Team1}} Regulars</th>
-      <th>{{.Team2}} Typical</th>
-      <th>{{.Team2}} Regulars</th>
-      <th>Edge</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Result.Machines}}
-    <tr>
-      <td class="td-machine">{{.MachineName}}</td>
-      <td data-label="{{$.Team1}} Typical"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1P50}}</a></td>
-      <td data-label="{{$.Team1}} Regulars"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1Likely}}</a></td>
-      <td data-label="{{$.Team2}} Typical"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2P50}}</a></td>
-      <td data-label="{{$.Team2}} Regulars"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2Likely}}</a></td>
-      <td data-label="Edge">{{formatEdge .Edge $.Team1 $.Team2 .Confidence}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
-
-<footer>
-  {{if .Result.Analysis.Team1Advantages}}
-  <p><strong>{{.Team1}} advantages:</strong> {{join .Result.Analysis.Team1Advantages ", "}}</p>
-  {{end}}
-  {{if .Result.Analysis.Team2Advantages}}
-  <p><strong>{{.Team2}} advantages:</strong> {{join .Result.Analysis.Team2Advantages ", "}}</p>
-  {{end}}
-  {{if .Result.Analysis.Contested}}
-  <p><strong>Contested:</strong> {{join .Result.Analysis.Contested ", "}}</p>
-  {{end}}
-</footer>
-{{else if .Error}}
+<details class="legend">
+  <summary>Change teams or venue</summary>
+  {{template "matchup-form" .}}
+</details>
+{{else}}
+<h2>Matchup</h2>
+{{template "matchup-form" .}}
+{{if .Error}}
 <p>{{.Error}}</p>
+{{end}}
 {{end}}
 {{end}}

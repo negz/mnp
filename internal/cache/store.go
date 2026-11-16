@@ -197,6 +197,11 @@ func (s *InMemoryStore) GetTeamMachineStats(ctx context.Context, teamKey, venueK
 	return s.wrapped.GetTeamMachineStats(ctx, teamKey, venueKey)
 }
 
+// GetRosterPicks passes through to the underlying store.
+func (s *InMemoryStore) GetRosterPicks(ctx context.Context, teamKey string) (map[string]int, error) {
+	return s.wrapped.GetRosterPicks(ctx, teamKey)
+}
+
 // GetVenueMachines passes through to the underlying store.
 func (s *InMemoryStore) GetVenueMachines(ctx context.Context, venueKey string) (map[string]bool, error) {
 	return s.wrapped.GetVenueMachines(ctx, venueKey)

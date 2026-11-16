@@ -27,7 +27,9 @@ type testFixture struct {
 //	Venue GPA (Georgetown Pizza and Arcade) with machines MM, TZ
 //	Team TTT (The Trailer Trashers) at STN — players Alice, Bob
 //	Team KNR (Knight Riders) at GPA — players Carol, Dave
-//	One match (TTT vs KNR, week 1 at STN) with games and results:
+//	IPRs: Alice 4, Bob 2
+//	One match (TTT home vs KNR away, week 1 at STN) with games and results.
+//	The picking team plays as players 1 and 3, so KNR picks games 1 and 3:
 //	  Game 1: TAF (doubles) — Alice 500, Bob 400, Carol 300, Dave 200
 //	  Game 2: TZ  (singles) — Alice 100, Carol 150
 //	  Game 3: TAF (singles) — Bob 350, Dave 250
@@ -128,6 +130,13 @@ func newTestStore(t *testing.T) (*SQLiteStore, testFixture) {
 		}
 	}
 
+	// IPRs: Alice 4, Bob 2. Carol and Dave have none.
+	for name, ipr := range map[string]int{"Alice": 4, "Bob": 2} {
+		if err := s.UpsertPlayerIPR(ctx, name, ipr); err != nil {
+			t.Fatalf("UpsertPlayerIPR %s: %v", name, err)
+		}
+	}
+
 	// Match: TTT vs KNR, week 1 at STN.
 	f.matchID, err = s.UpsertMatch(ctx, Match{
 		Key:        "mnp-23-1-TTT-KNR",
@@ -158,10 +167,10 @@ func newTestStore(t *testing.T) (*SQLiteStore, testFixture) {
 		{
 			round: 1, machineKey: "TAF", isDoubles: true,
 			results: []result{
-				{"Alice", f.tttID, 1, 500},
-				{"Bob", f.tttID, 2, 400},
 				{"Carol", f.knrID, 1, 300},
-				{"Dave", f.knrID, 2, 200},
+				{"Alice", f.tttID, 2, 500},
+				{"Dave", f.knrID, 3, 200},
+				{"Bob", f.tttID, 4, 400},
 			},
 		},
 		{
@@ -174,8 +183,8 @@ func newTestStore(t *testing.T) (*SQLiteStore, testFixture) {
 		{
 			round: 3, machineKey: "TAF", isDoubles: false,
 			results: []result{
-				{"Bob", f.tttID, 1, 350},
-				{"Dave", f.knrID, 2, 250},
+				{"Dave", f.knrID, 1, 250},
+				{"Bob", f.tttID, 2, 350},
 			},
 		},
 		{
@@ -244,7 +253,7 @@ func TestGetTeamMachineStats(t *testing.T) {
 	// TTT roster: Alice, Bob.
 	// TAF scores: Alice 500, Bob 400, Bob 350 → sorted [350, 400, 500]
 	//   P50: rn=(3+1)/2=2 → 400, P90: rn=(3*9+9)/10=3 → 500
-	//   Per-player: Bob [350,400] P50=350, Alice [500] P50=500.
+	//   Per-player: Bob [350,400] P50=350 P90=400, Alice [500] P50=500 P90=500.
 	//   Ranked by games desc: Bob (2), Alice (1).
 	// TZ scores: Alice 100 → P50=100, P90=100. Top player: Alice.
 	// MM scores: Alice 600 → P50=600, P90=600. Top player: Alice.
@@ -260,20 +269,20 @@ func TestGetTeamMachineStats(t *testing.T) {
 				{
 					MachineKey: "TAF", Games: 3, P50Score: 400, P90Score: 500,
 					LikelyPlayers: []LikelyPlayer{
-						{Name: "Bob", Games: 2, P50Score: 350},
-						{Name: "Alice", Games: 1, P50Score: 500},
+						{Name: "Bob", Games: 2, P50Score: 350, P90Score: 400, IPR: 2},
+						{Name: "Alice", Games: 1, P50Score: 500, P90Score: 500, IPR: 4},
 					},
 				},
 				{
 					MachineKey: "MM", Games: 1, P50Score: 600, P90Score: 600,
 					LikelyPlayers: []LikelyPlayer{
-						{Name: "Alice", Games: 1, P50Score: 600},
+						{Name: "Alice", Games: 1, P50Score: 600, P90Score: 600, IPR: 4},
 					},
 				},
 				{
 					MachineKey: "TZ", Games: 1, P50Score: 100, P90Score: 100,
 					LikelyPlayers: []LikelyPlayer{
-						{Name: "Alice", Games: 1, P50Score: 100},
+						{Name: "Alice", Games: 1, P50Score: 100, P90Score: 100, IPR: 4},
 					},
 				},
 			}},
@@ -285,14 +294,14 @@ func TestGetTeamMachineStats(t *testing.T) {
 				{
 					MachineKey: "TAF", Games: 3, P50Score: 400, P90Score: 500,
 					LikelyPlayers: []LikelyPlayer{
-						{Name: "Bob", Games: 2, P50Score: 350},
-						{Name: "Alice", Games: 1, P50Score: 500},
+						{Name: "Bob", Games: 2, P50Score: 350, P90Score: 400, IPR: 2},
+						{Name: "Alice", Games: 1, P50Score: 500, P90Score: 500, IPR: 4},
 					},
 				},
 				{
 					MachineKey: "TZ", Games: 1, P50Score: 100, P90Score: 100,
 					LikelyPlayers: []LikelyPlayer{
-						{Name: "Alice", Games: 1, P50Score: 100},
+						{Name: "Alice", Games: 1, P50Score: 100, P90Score: 100, IPR: 4},
 					},
 				},
 			}},
@@ -310,6 +319,77 @@ func TestGetTeamMachineStats(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want.stats, got); diff != "" {
 				t.Errorf("\n%s\nGetTeamMachineStats(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestGetRosterPicks(t *testing.T) {
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	// Alice picked AFM in season 21 while playing for another team.
+	seasonID, err := s.UpsertSeason(ctx, 21)
+	if err != nil {
+		t.Fatalf("UpsertSeason: %v", err)
+	}
+	oldID, err := s.UpsertTeam(ctx, Team{Key: "OLD", Name: "Old Team", SeasonID: seasonID, HomeVenueID: f.stnID})
+	if err != nil {
+		t.Fatalf("UpsertTeam OLD: %v", err)
+	}
+	awayID, err := s.UpsertTeam(ctx, Team{Key: "AWY", Name: "Away Team", SeasonID: seasonID, HomeVenueID: f.gpaID})
+	if err != nil {
+		t.Fatalf("UpsertTeam AWY: %v", err)
+	}
+	matchID, err := s.UpsertMatch(ctx, Match{Key: "mnp-21-1-OLD-AWY", SeasonID: seasonID, Week: 1, HomeTeamID: oldID, AwayTeamID: awayID, VenueID: f.stnID})
+	if err != nil {
+		t.Fatalf("UpsertMatch: %v", err)
+	}
+	gameID, err := s.InsertGame(ctx, Game{MatchID: matchID, Round: 2, MachineKey: "AFM"})
+	if err != nil {
+		t.Fatalf("InsertGame: %v", err)
+	}
+	alice, err := s.UpsertPlayer(ctx, "Alice")
+	if err != nil {
+		t.Fatalf("UpsertPlayer: %v", err)
+	}
+	if err := s.InsertGameResult(ctx, GameResult{GameID: gameID, PlayerID: alice, TeamID: oldID, Position: 1, Score: 100}); err != nil {
+		t.Fatalf("InsertGameResult: %v", err)
+	}
+
+	// Season 23: KNR picks TAF in rounds 1 and 3, with Carol and Dave both
+	// playing the round 1 doubles game. TTT picks TZ and MM in rounds 2 and 4,
+	// with Alice playing both.
+	cases := map[string]struct {
+		reason  string
+		teamKey string
+		want    map[string]int
+	}{
+		"HomeTeam": {
+			reason:  "Picks should include those the current roster made for other teams in earlier seasons.",
+			teamKey: "TTT",
+			want:    map[string]int{"TZ": 1, "MM": 1, "AFM": 1},
+		},
+		"AwayTeam": {
+			reason:  "A doubles game picked by two of the roster's players should count once.",
+			teamKey: "KNR",
+			want:    map[string]int{"TAF": 2},
+		},
+		"UnknownTeam": {
+			reason:  "A team with no roster should get an empty map.",
+			teamKey: "NOPE",
+			want:    map[string]int{},
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := s.GetRosterPicks(ctx, tc.teamKey)
+			if err != nil {
+				t.Fatalf("GetRosterPicks: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Errorf("\n%s\nGetRosterPicks(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}
@@ -361,8 +441,8 @@ func TestGetPlayerMachineStats(t *testing.T) {
 			reason: "Should return per-player stats for a team's roster on a specific machine.",
 			args:   args{teamKey: "TTT", machineKey: "TAF", venueKey: ""},
 			want: want{stats: []PlayerStats{
-				{Name: "Alice", Games: 1, P50Score: 500, P90Score: 500},
-				{Name: "Bob", Games: 2, P50Score: 350, P90Score: 400},
+				{Name: "Alice", Games: 1, P50Score: 500, P90Score: 500, IPR: 4},
+				{Name: "Bob", Games: 2, P50Score: 350, P90Score: 400, IPR: 2},
 			}},
 		},
 		"NoResults": {
@@ -444,7 +524,7 @@ func TestGetPlayer(t *testing.T) {
 		t.Fatalf("GetPlayer: %v", err)
 	}
 
-	want := PlayerSummary{Name: "Alice", TeamKey: "TTT", Team: "The Trailer Trashers"}
+	want := PlayerSummary{Name: "Alice", TeamKey: "TTT", Team: "The Trailer Trashers", IPR: 4}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("GetPlayer(...): -want, +got:\n%s", diff)
 	}
