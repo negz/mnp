@@ -181,15 +181,7 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatP50(p50, leagueP50)
 		},
-		"formatRelStr": output.FormatRelStr,
-		"shortName": func(name string) string {
-			if first, last, ok := strings.Cut(name, " "); ok {
-				return first + " " + last[:1]
-			}
-			return name
-		},
 		"pathEscape": url.PathEscape,
-		"formatIPR":  output.FormatIPR,
 	}
 }
 
@@ -476,6 +468,7 @@ type recommendData struct {
 
 	TeamName    string
 	MachineName string
+	VenueName   string
 
 	Result *recommend.Result
 	Error  string
@@ -588,6 +581,13 @@ func (s *Server) handleRecommend(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	data.VenueName = venue
+	for _, v := range venues {
+		if v.Key == venue {
+			data.VenueName = v.Name
+			break
+		}
+	}
 
 	var opts []recommend.Option
 	switch {
@@ -618,9 +618,10 @@ type scoutData struct {
 	Teams  []db.TeamSummary
 	Venues []db.Venue
 
-	Team     string
-	Venue    string
-	TeamName string
+	Team      string
+	Venue     string
+	TeamName  string
+	VenueName string
 
 	Result *scout.Result
 	Error  string
@@ -683,6 +684,13 @@ func (s *Server) handleScout(w http.ResponseWriter, r *http.Request) {
 	for _, t := range teams {
 		if t.Key == team {
 			data.TeamName = t.Name
+			break
+		}
+	}
+	data.VenueName = venue
+	for _, v := range venues {
+		if v.Key == venue {
+			data.VenueName = v.Name
 			break
 		}
 	}

@@ -2,57 +2,43 @@
 
 {{define "content"}}
 {{if .Result}}
-<h2>{{.Name}}</h2>
-
-{{if .Result.Team}}
-<p>Team: <a href="/t/{{.Result.Team.Key}}">{{.Result.Team.Name}}</a>{{if .Result.IPR}} · IPR {{.Result.IPR}}{{end}}</p>
-{{end}}
+<hgroup>
+  <h2>{{.Name}}</h2>
+  {{if .Result.Team}}
+  <p><a href="/t/{{.Result.Team.Key}}">{{.Result.Team.Name}}</a>{{if .Result.IPR}} · IPR {{.Result.IPR}}{{end}}</p>
+  {{end}}
+</hgroup>
 
 {{if .Result.GlobalStats}}
+{{if .Result.Analysis.Strongest}}
+<p><small><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</small></p>
+{{end}}
+{{if .Result.Analysis.Weakest}}
+<p><small><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</small></p>
+{{end}}
+
+<section>
+  {{range .Result.GlobalStats}}
+  <div class="row">
+    <div class="row-head">
+      <span class="row-title">{{if $.Result.Team}}<a href="/t/{{$.Result.Team.Key}}/recommend/{{.MachineKey}}">{{.MachineName}}</a>{{else}}{{.MachineName}}{{end}}</span>
+      <span class="row-value">{{formatP50 .P50Score .LeagueP50}} <small class="muted">typical</small></span>
+      <small class="row-sub">{{formatScore .P90Score}} high · {{.Games}} {{if eq .Games 1}}game{{else}}games{{end}}</small>
+    </div>
+  </div>
+  {{end}}
+</section>
+
 <details class="legend">
   <summary>How to read this</summary>
   <dl>
-    {{template "term-games"}}
     {{template "term-typical"}}
     {{template "term-vs-league"}}
+    {{template "term-games"}}
     {{template "term-high"}}
   </dl>
 </details>
-
-<table class="striped responsive">
-  <thead>
-    <tr>
-      <th>Machine</th>
-      <th>Games</th>
-      <th>Typical</th>
-      <th>High</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Result.GlobalStats}}
-    <tr>
-      {{if $.Result.Team}}
-      <td class="td-machine"><a href="/t/{{$.Result.Team.Key}}/recommend/{{.MachineKey}}">{{.MachineName}}</a></td>
-      {{else}}
-      <td class="td-machine">{{.MachineName}}</td>
-      {{end}}
-      <td data-label="Games">{{.Games}}</td>
-      <td data-label="Typical">{{formatP50 .P50Score .LeagueP50}}</td>
-      <td data-label="High">{{formatScore .P90Score}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
 {{end}}
-
-<footer>
-  {{if .Result.Analysis.Strongest}}
-  <p><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</p>
-  {{end}}
-  {{if .Result.Analysis.Weakest}}
-  <p><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</p>
-  {{end}}
-</footer>
 
 {{else if .Error}}
 <h2>{{.Name}}</h2>

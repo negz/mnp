@@ -95,42 +95,6 @@
       hgroup.title h2 span {
         display: block;
       }
-      /* Data tables: label/value cards */
-      table.responsive thead {
-        display: none;
-      }
-      table.responsive,
-      table.responsive tbody,
-      table.responsive tr,
-      table.responsive td {
-        display: block;
-      }
-      table.responsive tr {
-        padding: 0.75rem 0;
-        border-bottom: 1px solid var(--pico-muted-border-color);
-      }
-      table.responsive td {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 0.25rem 0;
-        border: none;
-      }
-      table.responsive td::before {
-        content: attr(data-label);
-        font-weight: bold;
-        margin-right: 1rem;
-        flex-shrink: 0;
-      }
-      table.responsive td:not([data-label]) {
-        justify-content: center;
-      }
-      table.responsive .td-machine {
-        display: block;
-        font-weight: bold;
-        color: var(--pico-primary);
-        text-align: center;
-      }
       /* Schedule tables: compact match cards */
       table.schedule thead {
         display: none;
