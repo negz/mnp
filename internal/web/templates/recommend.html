@@ -29,6 +29,17 @@
 {{if .Result}}
 <h3>{{.TeamName}} on {{.MachineName}}</h3>
 
+<details class="legend">
+  <summary>How to read this</summary>
+  <dl>
+    {{template "term-games"}}
+    {{template "term-typical"}}
+    {{template "term-vs-league"}}
+    {{template "term-high"}}
+    {{template "term-ipr"}}
+  </dl>
+</details>
+
 {{if .Result.Opponent}}
 <h4>{{.Team}} options</h4>
 {{end}}
@@ -39,25 +50,25 @@
   <thead>
     <tr>
       <th>Player</th>
-      <th title="Number of games played on this machine">Games</th>
-      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
-      <th title="90th percentile score — their ceiling">P90</th>
-      <th title="Individual Player Rating">IPR</th>
+      <th>Games</th>
+      <th>Typical</th>
+      <th>High</th>
+      <th>IPR</th>
     </tr>
   </thead>
   <tbody>
     {{range .Result.VenueStats}}
     <tr>
       <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a></td>
-      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
-      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
-      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
-      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
+      <td data-label="Games">{{.Games}}</td>
+      <td data-label="Typical">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="High">{{formatScore .P90Score}}</td>
+      <td data-label="IPR">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>
 </table>
-<h4>Global (for context)</h4>
+<h4>All venues</h4>
 {{end}}
 
 {{if .Result.GlobalStats}}
@@ -65,20 +76,20 @@
   <thead>
     <tr>
       <th>Player</th>
-      <th title="Number of games played on this machine">Games</th>
-      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
-      <th title="90th percentile score — their ceiling">P90</th>
-      <th title="Individual Player Rating">IPR</th>
+      <th>Games</th>
+      <th>Typical</th>
+      <th>High</th>
+      <th>IPR</th>
     </tr>
   </thead>
   <tbody>
     {{range .Result.GlobalStats}}
     <tr>
       <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a>{{if .NoVenueData}}*{{end}}</td>
-      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
-      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
-      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
-      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
+      <td data-label="Games">{{.Games}}</td>
+      <td data-label="Typical">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="High">{{formatScore .P90Score}}</td>
+      <td data-label="IPR">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>
@@ -92,20 +103,20 @@
   <thead>
     <tr>
       <th>Player</th>
-      <th title="Number of games played on this machine">Games</th>
-      <th title="Median score vs league average for this machine">P50 (vs Avg)</th>
-      <th title="90th percentile score — their ceiling">P90</th>
-      <th title="Individual Player Rating">IPR</th>
+      <th>Games</th>
+      <th>Typical</th>
+      <th>High</th>
+      <th>IPR</th>
     </tr>
   </thead>
   <tbody>
     {{range .Result.OpponentStats}}
     <tr>
       <td class="td-machine"><a href="/p/{{pathEscape .Name}}">{{.Name}}</a></td>
-      <td data-label="Games" title="Number of games played on this machine">{{.Games}}</td>
-      <td data-label="P50 (vs Avg)" title="Median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
-      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
-      <td data-label="IPR" title="Individual Player Rating">{{formatIPR .IPR}}</td>
+      <td data-label="Games">{{.Games}}</td>
+      <td data-label="Typical">{{formatP50 .P50Score .LeagueP50}}</td>
+      <td data-label="High">{{formatScore .P90Score}}</td>
+      <td data-label="IPR">{{formatIPR .IPR}}</td>
     </tr>
     {{end}}
   </tbody>

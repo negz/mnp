@@ -36,26 +36,35 @@
 </form>
 
 {{if .Result}}
+<details class="legend">
+  <summary>How to read this</summary>
+  <dl>
+    {{template "term-typical"}}
+    <dt>Regulars</dt><dd>The typical score of the two players who've played this machine the most.</dd>
+    <dt>Edge</dt><dd>How much higher one team's regulars typically score. ▲ means both teams' regulars average 10+ games on this machine, △ 3–9, and ▼ fewer than 3.</dd>
+  </dl>
+</details>
+
 <table class="striped responsive">
   <thead>
     <tr>
       <th>Machine</th>
-      <th title="Team median score — what they'll probably score">{{.Team1}} P50</th>
-      <th title="Average P50 of the two players with the most games on this machine">{{.Team1}} Likely</th>
-      <th title="Team median score — what they'll probably score">{{.Team2}} P50</th>
-      <th title="Average P50 of the two players with the most games on this machine">{{.Team2}} Likely</th>
-      <th title="Likely score difference. ▲ high confidence (10+ games), △ medium (3–9), ▼ low (&lt;3)">Edge</th>
+      <th>{{.Team1}} Typical</th>
+      <th>{{.Team1}} Regulars</th>
+      <th>{{.Team2}} Typical</th>
+      <th>{{.Team2}} Regulars</th>
+      <th>Edge</th>
     </tr>
   </thead>
   <tbody>
     {{range .Result.Machines}}
     <tr>
       <td class="td-machine">{{.MachineName}}</td>
-      <td data-label="{{$.Team1}} P50" title="Team median score — what they'll probably score"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1P50}}</a></td>
-      <td data-label="{{$.Team1}} Likely" title="Average P50 of the two players with the most games on this machine"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1Likely}}</a></td>
-      <td data-label="{{$.Team2}} P50" title="Team median score — what they'll probably score"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2P50}}</a></td>
-      <td data-label="{{$.Team2}} Likely" title="Average P50 of the two players with the most games on this machine"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2Likely}}</a></td>
-      <td data-label="Edge" title="Likely score difference. ▲ high confidence (10+ games), △ medium (3–9), ▼ low (&lt;3)">{{formatEdge .Edge $.Team1 $.Team2 .Confidence}}</td>
+      <td data-label="{{$.Team1}} Typical"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1P50}}</a></td>
+      <td data-label="{{$.Team1}} Regulars"><a href="/t/{{$.Team1}}/recommend/{{.MachineKey}}?vs={{$.Team2}}">{{formatScore .Team1Likely}}</a></td>
+      <td data-label="{{$.Team2}} Typical"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2P50}}</a></td>
+      <td data-label="{{$.Team2}} Regulars"><a href="/t/{{$.Team2}}/recommend/{{.MachineKey}}?vs={{$.Team1}}">{{formatScore .Team2Likely}}</a></td>
+      <td data-label="Edge">{{formatEdge .Edge $.Team1 $.Team2 .Confidence}}</td>
     </tr>
     {{end}}
   </tbody>

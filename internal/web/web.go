@@ -442,10 +442,10 @@ func (d recommendData) FormatAssessment() string {
 	}
 	switch a.Verdict {
 	case recommend.VerdictStrong:
-		return fmt.Sprintf("%s outscores %s's best (%s) by ~%s P50. Strong pick.",
+		return fmt.Sprintf("%s typically outscores %s's best (%s) by ~%s. Strong pick.",
 			a.OurBest, d.Result.Opponent, a.TheirBest, output.FormatScore(a.Diff))
 	case recommend.VerdictWeak:
-		return fmt.Sprintf("%s's best (%s) outscores %s by ~%s P50. Weak pick.",
+		return fmt.Sprintf("%s's best (%s) typically outscores %s by ~%s. Weak pick.",
 			d.Result.Opponent, a.TheirBest, a.OurBest, output.FormatScore(-a.Diff))
 	case recommend.VerdictContested:
 		return fmt.Sprintf("%s and %s's best (%s) are roughly even. Contested.",
