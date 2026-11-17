@@ -18,6 +18,7 @@ type Store interface {
 	GetLeagueP50(ctx context.Context) (map[string]float64, error)
 	GetMachineNames(ctx context.Context) (map[string]string, error)
 	GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]db.TeamMachineStats, error)
+	GetRosterPicks(ctx context.Context, teamKey string) (map[string]int, error)
 	GetVenueMachines(ctx context.Context, venueKey string) (map[string]bool, error)
 }
 
@@ -26,6 +27,8 @@ type LikelyPlayer struct {
 	Name     string
 	Games    int
 	P50Score float64
+	P90Score float64
+	IPR      int
 }
 
 // MachineStats is a team's performance on a single machine.
@@ -33,6 +36,7 @@ type MachineStats struct {
 	MachineKey    string
 	MachineName   string
 	Games         int
+	Picks         int // Games the team's current players picked this machine for, ever.
 	P50Score      float64
 	P90Score      float64
 	LeagueP50     float64
@@ -85,8 +89,12 @@ func Analyze(ctx context.Context, s Store, team string, opts ...Option) (*Result
 		return nil, fmt.Errorf("load machine names: %w", err)
 	}
 
+	var venueMachines map[string]bool
 	if o.venue != "" {
-		return scoutVenue(ctx, s, team, o.venue, leagueP50, names)
+		venueMachines, err = s.GetVenueMachines(ctx, o.venue)
+		if err != nil {
+			return nil, fmt.Errorf("load venue machines: %w", err)
+		}
 	}
 
 	stats, err := s.GetTeamMachineStats(ctx, team, "")
@@ -94,53 +102,43 @@ func Analyze(ctx context.Context, s Store, team string, opts ...Option) (*Result
 		return nil, fmt.Errorf("load team stats: %w", err)
 	}
 
+	picks, err := s.GetRosterPicks(ctx, team)
+	if err != nil {
+		return nil, fmt.Errorf("load roster picks: %w", err)
+	}
+
+	if o.venue != "" {
+		filtered := make([]db.TeamMachineStats, 0, len(stats))
+		for _, ts := range stats {
+			if venueMachines[ts.MachineKey] {
+				filtered = append(filtered, ts)
+			}
+		}
+		stats = filtered
+	}
+
 	return &Result{
 		Team:        team,
-		GlobalStats: enrichStats(stats, leagueP50, names),
+		Venue:       o.venue,
+		GlobalStats: enrichStats(stats, leagueP50, names, picks),
 		Analysis:    analyze(stats, leagueP50, names),
 	}, nil
 }
 
-func scoutVenue(ctx context.Context, s Store, team, venue string, leagueP50 map[string]float64, names map[string]string) (*Result, error) {
-	venueMachines, err := s.GetVenueMachines(ctx, venue)
-	if err != nil {
-		return nil, fmt.Errorf("load venue machines: %w", err)
-	}
-
-	globalStats, err := s.GetTeamMachineStats(ctx, team, "")
-	if err != nil {
-		return nil, fmt.Errorf("load team stats: %w", err)
-	}
-
-	// Filter global stats to machines at the venue.
-	filtered := make([]db.TeamMachineStats, 0, len(globalStats))
-	for _, gs := range globalStats {
-		if venueMachines[gs.MachineKey] {
-			filtered = append(filtered, gs)
-		}
-	}
-
-	return &Result{
-		Team:        team,
-		Venue:       venue,
-		GlobalStats: enrichStats(filtered, leagueP50, names),
-		Analysis:    analyze(filtered, leagueP50, names),
-	}, nil
-}
-
-func enrichStats(stats []db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) []MachineStats {
+func enrichStats(stats []db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string, picks map[string]int) []MachineStats {
 	result := make([]MachineStats, len(stats))
 	for i, s := range stats {
-		result[i] = enrichStat(s, leagueP50, names)
+		result[i] = enrichStat(s, leagueP50, names, picks)
 	}
 	return result
 }
 
-func enrichStat(s db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string) MachineStats {
+func enrichStat(s db.TeamMachineStats, leagueP50 map[string]float64, names map[string]string, picks map[string]int) MachineStats {
 	ms := MachineStats{
 		MachineKey:  s.MachineKey,
 		MachineName: output.MachineName(names, s.MachineKey),
 		Games:       s.Games,
+		Picks:       picks[s.MachineKey],
 		P50Score:    s.P50Score,
 		P90Score:    s.P90Score,
 		LeagueP50:   leagueP50[s.MachineKey],
@@ -150,6 +148,8 @@ func enrichStat(s db.TeamMachineStats, leagueP50 map[string]float64, names map[s
 			Name:     lp.Name,
 			Games:    lp.Games,
 			P50Score: lp.P50Score,
+			P90Score: lp.P90Score,
+			IPR:      lp.IPR,
 		})
 	}
 	return ms

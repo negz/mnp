@@ -15,6 +15,7 @@ type MockStore struct {
 	MockGetLeagueP50        func(ctx context.Context) (map[string]float64, error)
 	MockGetMachineNames     func(ctx context.Context) (map[string]string, error)
 	MockGetTeamMachineStats func(ctx context.Context, teamKey, venueKey string) ([]db.TeamMachineStats, error)
+	MockGetRosterPicks      func(ctx context.Context, teamKey string) (map[string]int, error)
 	MockGetVenueMachines    func(ctx context.Context, venueKey string) (map[string]bool, error)
 }
 
@@ -28,6 +29,10 @@ func (m *MockStore) GetMachineNames(ctx context.Context) (map[string]string, err
 
 func (m *MockStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]db.TeamMachineStats, error) {
 	return m.MockGetTeamMachineStats(ctx, teamKey, venueKey)
+}
+
+func (m *MockStore) GetRosterPicks(ctx context.Context, teamKey string) (map[string]int, error) {
+	return m.MockGetRosterPicks(ctx, teamKey)
 }
 
 func (m *MockStore) GetVenueMachines(ctx context.Context, venueKey string) (map[string]bool, error) {
@@ -73,11 +78,17 @@ func TestAnalyze(t *testing.T) {
 					},
 					MockGetTeamMachineStats: func(_ context.Context, _, _ string) ([]db.TeamMachineStats, error) {
 						return []db.TeamMachineStats{
-							{MachineKey: "TAF", Games: 10, P50Score: 60_000_000, P90Score: 80_000_000},
+							{
+								MachineKey: "TAF", Games: 10, P50Score: 60_000_000, P90Score: 80_000_000,
+								LikelyPlayers: []db.LikelyPlayer{{Name: "Alice", Games: 6, P50Score: 70_000_000, P90Score: 95_000_000, IPR: 4}},
+							},
 							{MachineKey: "MM", Games: 8, P50Score: 15_000_000, P90Score: 25_000_000},
 							{MachineKey: "TZ", Games: 5, P50Score: 20_000_000, P90Score: 30_000_000},
 							{MachineKey: "AFM", Games: 4, P50Score: 10_000_000, P90Score: 15_000_000},
 						}, nil
+					},
+					MockGetRosterPicks: func(_ context.Context, _ string) (map[string]int, error) {
+						return map[string]int{"TAF": 7, "AFM": 2}, nil
 					},
 				},
 				team: "CRA",
@@ -86,10 +97,13 @@ func TestAnalyze(t *testing.T) {
 				result: &Result{
 					Team: "CRA",
 					GlobalStats: []MachineStats{
-						{MachineKey: "TAF", MachineName: "The Addams Family", Games: 10, P50Score: 60_000_000, P90Score: 80_000_000, LeagueP50: 30_000_000},
+						{
+							MachineKey: "TAF", MachineName: "The Addams Family", Games: 10, Picks: 7, P50Score: 60_000_000, P90Score: 80_000_000, LeagueP50: 30_000_000,
+							LikelyPlayers: []LikelyPlayer{{Name: "Alice", Games: 6, P50Score: 70_000_000, P90Score: 95_000_000, IPR: 4}},
+						},
 						{MachineKey: "MM", MachineName: "Medieval Madness", Games: 8, P50Score: 15_000_000, P90Score: 25_000_000, LeagueP50: 15_000_000},
 						{MachineKey: "TZ", MachineName: "Twilight Zone", Games: 5, P50Score: 20_000_000, P90Score: 30_000_000, LeagueP50: 40_000_000},
-						{MachineKey: "AFM", MachineName: "Attack From Mars", Games: 4, P50Score: 10_000_000, P90Score: 15_000_000, LeagueP50: 20_000_000},
+						{MachineKey: "AFM", MachineName: "Attack From Mars", Games: 4, Picks: 2, P50Score: 10_000_000, P90Score: 15_000_000, LeagueP50: 20_000_000},
 					},
 					Analysis: Analysis{
 						Strongest: []string{"The Addams Family", "Medieval Madness", "Twilight Zone"},
@@ -118,6 +132,9 @@ func TestAnalyze(t *testing.T) {
 							{MachineKey: "TZ", Games: 5, P50Score: 20_000_000, P90Score: 30_000_000},
 						}, nil
 					},
+					MockGetRosterPicks: func(_ context.Context, _ string) (map[string]int, error) {
+						return map[string]int{"MM": 3, "TZ": 9}, nil
+					},
 				},
 				team: "CRA",
 				opts: []Option{AtVenue("SAM")},
@@ -128,7 +145,7 @@ func TestAnalyze(t *testing.T) {
 					Venue: "SAM",
 					GlobalStats: []MachineStats{
 						{MachineKey: "TAF", MachineName: "The Addams Family", Games: 10, P50Score: 50_000_000, P90Score: 70_000_000, LeagueP50: 30_000_000},
-						{MachineKey: "MM", MachineName: "Medieval Madness", Games: 8, P50Score: 20_000_000, P90Score: 30_000_000, LeagueP50: 15_000_000},
+						{MachineKey: "MM", MachineName: "Medieval Madness", Games: 8, Picks: 3, P50Score: 20_000_000, P90Score: 30_000_000, LeagueP50: 15_000_000},
 					},
 					Analysis: Analysis{
 						Strongest: []string{"The Addams Family", "Medieval Madness"},
@@ -151,6 +168,9 @@ func TestAnalyze(t *testing.T) {
 							{MachineKey: "TAF", Games: 3, P50Score: 60_000_000},
 							{MachineKey: "MM", Games: 2, P50Score: 100_000_000},
 						}, nil
+					},
+					MockGetRosterPicks: func(_ context.Context, _ string) (map[string]int, error) {
+						return nil, nil
 					},
 				},
 				team: "CRA",
@@ -210,6 +230,29 @@ func TestAnalyze(t *testing.T) {
 						return map[string]string{}, nil
 					},
 					MockGetTeamMachineStats: func(_ context.Context, _, _ string) ([]db.TeamMachineStats, error) {
+						return nil, errors.New("boom")
+					},
+				},
+				team: "CRA",
+			},
+			want: want{
+				err: cmpopts.AnyError,
+			},
+		},
+		"GetRosterPicksError": {
+			reason: "An error loading team picks should be returned.",
+			args: args{
+				store: &MockStore{
+					MockGetLeagueP50: func(_ context.Context) (map[string]float64, error) {
+						return map[string]float64{}, nil
+					},
+					MockGetMachineNames: func(_ context.Context) (map[string]string, error) {
+						return map[string]string{}, nil
+					},
+					MockGetTeamMachineStats: func(_ context.Context, _, _ string) ([]db.TeamMachineStats, error) {
+						return nil, nil
+					},
+					MockGetRosterPicks: func(_ context.Context, _ string) (map[string]int, error) {
 						return nil, errors.New("boom")
 					},
 				},

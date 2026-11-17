@@ -26,9 +26,13 @@ func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 		return err
 	}
 
-	st := cache.NewInMemoryStore(dbst)
-
 	log := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+
+	// Serve what's already in the database while the first sync runs.
+	st := cache.NewInMemoryStore(dbst)
+	if err := st.Refresh(ctx); err != nil {
+		log.Error("initial cache refresh failed", "err", err)
+	}
 
 	go web.Sync(ctx, func(ctx context.Context) error {
 		if err := d.Sync(ctx); err != nil {

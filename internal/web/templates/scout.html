@@ -1,8 +1,6 @@
 {{define "title"}}MNP - Scout{{if .TeamName}} {{.TeamName}}{{end}}{{end}}
 
-{{define "content"}}
-<h2>Scout</h2>
-
+{{define "scout-form"}}
 <form id="scout-form" method="get" action="/scout">
   <div class="grid">
     <label>
@@ -25,45 +23,68 @@
     </label>
   </div>
 </form>
-
-{{if .Result}}
-<h3>{{.TeamName}}{{if .Result.Venue}} — {{.Result.Venue}} machines{{end}}</h3>
-
-{{if .Result.GlobalStats}}
-<table class="striped responsive">
-  <thead>
-    <tr>
-      <th>Machine</th>
-      <th title="Number of team games on this machine league-wide">Games</th>
-      <th title="Team median score vs league average for this machine">P50 (vs Avg)</th>
-      <th title="90th percentile score — the team's ceiling">P90</th>
-      <th title="Players most likely to play this machine, based on games played">Likely Players</th>
-    </tr>
-  </thead>
-  <tbody>
-    {{range .Result.GlobalStats}}
-    <tr>
-      <td class="td-machine"><a href="/t/{{$.Team}}/recommend/{{.MachineKey}}">{{.MachineName}}</a></td>
-      <td data-label="Games" title="Team games league-wide">{{.Games}}</td>
-      <td data-label="P50 (vs Avg)" title="Team median score vs league average">{{formatP50 .P50Score .LeagueP50}}</td>
-      <td data-label="P90" title="90th percentile score">{{formatScore .P90Score}}</td>
-      <td data-label="Likely Players" title="Most likely players for this machine">{{range $i, $p := .LikelyPlayers}}{{if $i}}, {{end}}<a href="/p/{{pathEscape $p.Name}}">{{shortName $p.Name}}</a> ({{formatScore $p.P50Score}}){{end}}</td>
-    </tr>
-    {{end}}
-  </tbody>
-</table>
 {{end}}
 
-<footer>
-  {{if .Result.Analysis.Strongest}}
-  <p><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</p>
-  {{end}}
-  {{if .Result.Analysis.Weakest}}
-  <p><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</p>
-  {{end}}
-</footer>
+{{define "content"}}
+{{if .Result}}
+<hgroup>
+  <h2>{{.TeamName}}</h2>
+  <p><a href="/t/{{.Team}}">Schedule</a></p>
+</hgroup>
 
-{{else if .Error}}
+<form id="scout-venue" method="get" action="/scout">
+  <input type="hidden" name="team" value="{{.Team}}">
+  <select name="venue" aria-label="Venue" onchange="document.getElementById('scout-venue').requestSubmit()">
+    <option value="">Machines at all venues</option>
+    {{range .Venues}}
+    <option value="{{.Key}}"{{if eq .Key $.Venue}} selected{{end}}>Machines at {{.Name}}</option>
+    {{end}}
+  </select>
+</form>
+
+{{if .Result.Analysis.Strongest}}
+<p><small><strong>Strongest:</strong> {{join .Result.Analysis.Strongest ", "}}</small></p>
+{{end}}
+{{if .Result.Analysis.Weakest}}
+<p><small><strong>Weakest:</strong> {{join .Result.Analysis.Weakest ", "}}</small></p>
+{{end}}
+
+<section>
+  {{range .Result.GlobalStats}}
+  <details class="row">
+    <summary>
+      <span class="row-title">{{.MachineName}}</span>
+      <span class="row-value">{{formatP50 .P50Score .LeagueP50}} <small class="muted">typical</small></span>
+      <small class="row-sub">{{if .Picks}}Picked {{.Picks}}× · {{end}}{{formatScore .P90Score}} high · {{.Games}} {{if eq .Games 1}}game{{else}}games{{end}}</small>
+    </summary>
+    {{template "regulars" .LikelyPlayers}}
+    <p><small><a href="/t/{{$.Team}}/recommend/{{.MachineKey}}{{if $.Result.Venue}}?venue={{$.Venue}}{{end}}">Everyone on {{$.Team}} →</a></small></p>
+  </details>
+  {{end}}
+</section>
+
+<details class="legend">
+  <summary>How to read this</summary>
+  <dl>
+    {{template "term-typical"}}
+    {{template "term-vs-league"}}
+    {{template "term-high"}}
+    <dt>Picked</dt><dd>Times the team's current players chose this machine, for any team, at any venue.</dd>
+    {{template "term-games"}}
+    <dt>Regulars</dt><dd>Tap a machine to see the three players who've played it the most lately. Someone with fewer games can be listed first if they've played it more recently.</dd>
+    {{template "term-ipr"}}
+  </dl>
+</details>
+
+<details class="legend">
+  <summary>Change team</summary>
+  {{template "scout-form" .}}
+</details>
+{{else}}
+<h2>Scout</h2>
+{{template "scout-form" .}}
+{{if .Error}}
 <p>{{.Error}}</p>
+{{end}}
 {{end}}
 {{end}}

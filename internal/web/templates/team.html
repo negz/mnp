@@ -2,12 +2,15 @@
 
 {{define "content"}}
 <div class="page-header">
-  <h2>{{.TeamName}}</h2>
+  <hgroup>
+    <h2>{{.TeamName}}</h2>
+    <p><a href="/t/{{.TeamKey}}/scout">Scout {{.TeamKey}}</a></p>
+  </hgroup>
   {{if .Roster}}
   <select onchange="if(this.value) window.location.href=this.value">
     <option value="">Roster ({{len .Roster}})</option>
     {{range .Roster}}
-    <option value="/p/{{.Name}}">{{.Name}}</option>
+    <option value="/p/{{pathEscape .Name}}">{{.Name}}{{if .IPR}} · IPR {{.IPR}}{{end}}</option>
     {{end}}
   </select>
   {{end}}
