@@ -1,0 +1,67 @@
+{{define "title"}}MNP - Live {{.Team1}} vs {{.Team2}}{{end}}
+
+{{define "live-options"}}
+<ul>
+  {{range .}}
+  <li><a href="/p/{{pathEscape .Name}}">{{.Name}}</a>{{if .Suggested}} <small class="muted">· suggested for {{.Suggested}}</small>{{end}}<br><small>{{if .IPR}}IPR {{.IPR}} · {{end}}{{if .Games}}{{formatScore .P50Score}} typical · {{formatScore .P90Score}} high · {{.Games}} {{if eq .Games 1}}game{{else}}games{{end}}{{else}}hasn't played it{{end}}{{if .Sub}} · sub{{end}}</small></li>
+  {{end}}
+</ul>
+{{end}}
+
+{{define "content"}}
+<hgroup class="title">
+  <h2><span>{{.Team1Name}}</span> <span><small>vs</small> {{.Team2Name}}</span></h2>
+  <p>{{.VenueName}} · <a href="/matchup?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">Matchup</a></p>
+</hgroup>
+
+{{with .Live}}
+{{with .Response}}
+<p class="live-round"><strong>Round {{.Round}}</strong> · {{.Responder}} responding<br><small class="muted">{{.Picker}} picked {{len .Games}} {{if .Doubles}}doubles{{else}}singles{{end}} games. The suggestions expect about {{formatPoints .Points}} of {{.MaxPoints}} points.</small></p>
+
+<section>
+  {{range .Games}}
+  <details class="row">
+    <summary>
+      <span class="row-title">{{.MachineName}}</span>
+      <span class="row-value">{{formatPoints .Points}} of {{.MaxPoints}} points</span>
+      <small class="row-sub">{{range $i, $p := .Theirs}}{{if $i}} & {{end}}{{$p.Name}}{{end}}{{if .FewGames}} · few games{{end}}</small>
+    </summary>
+    <div class="grid">
+      <div>
+        <p><strong>{{$.Live.Response.Picker}}</strong></p>
+        {{template "regulars" .Theirs}}
+      </div>
+      <div>
+        <p><strong>{{$.Live.Response.Responder}}</strong> <small class="muted">· suggested</small></p>
+        {{template "live-options" .Suggested}}
+        {{with .Alternates}}
+        <p><small class="muted">Or</small></p>
+        {{template "live-options" .}}
+        {{end}}
+      </div>
+    </div>
+  </details>
+  {{end}}
+</section>
+
+{{with .SittingOut}}<p><small class="muted">Sitting out: {{range $i, $p := .}}{{if $i}}, {{end}}{{$p.Name}}{{end}}</small></p>{{end}}
+
+<details class="legend">
+  <summary>How to read this</summary>
+  <dl>
+    <dt>Suggested</dt><dd>The response expected to win the most points across the whole round. It uses each of your players once, and makes sure everyone can still play three games tonight.</dd>
+    <dt>Points</dt><dd>The points the suggested players are expected to win, using everyone's typical and high scores on the machine. Players with few games on a machine are assumed to play like others with their IPR.</dd>
+    <dt>Few games</dt><dd>Your suggested players, or theirs, average fewer than 3 games on the machine, so the estimate leans on IPR.</dd>
+    <dt>Or</dt><dd>The players next most likely to win points on their own, even if they're suggested for another game.</dd>
+    {{template "term-typical"}}
+    {{template "term-high"}}
+    {{template "term-ipr"}}
+  </dl>
+</details>
+{{else}}
+<p class="live-round"><strong>{{.Status}}</strong><br><small class="muted">Suggestions appear here when {{$.Team1}} is responding to {{$.Team2}}'s picks. Reload to check.</small></p>
+{{end}}
+{{else}}
+<p>{{.Team1}} and {{.Team2}} aren't playing each other today.</p>
+{{end}}
+{{end}}
