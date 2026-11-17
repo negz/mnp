@@ -1,8 +1,10 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 )
 
 // PlayerStats contains aggregated stats for a player on a specific machine.
@@ -23,7 +25,8 @@ type TeamMachineStats struct {
 	LikelyPlayers []LikelyPlayer
 }
 
-// LikelyPlayer is a player likely to play a machine, ranked by play count.
+// LikelyPlayer is a player likely to play a machine, ranked by how much they
+// have played it lately.
 type LikelyPlayer struct {
 	Name     string
 	Games    int
@@ -34,31 +37,16 @@ type LikelyPlayer struct {
 
 // GetTeamMachineStats returns per-machine stats for a team's current roster.
 // Stats are aggregated across all seasons, but only for players currently on
-// the team (latest season with that team key).
+// the team (latest season with that team key). Recent seasons count for more.
 // If venueKey is non-empty, filters to games played at that venue.
 // Results are ordered by play count descending (most-played machines first).
-// The 3 players with the most games on each machine are included.
+// The 3 players who've played each machine the most lately are included.
 func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
-	stats, err := s.GetTeamMachineAgg(ctx, teamKey, venueKey)
+	latest, err := s.MaxSeasonNumber(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get latest season: %w", err)
 	}
 
-	topPlayers, err := s.GetTopPlayers(ctx, teamKey, venueKey)
-	if err != nil {
-		return nil, err
-	}
-
-	for i := range stats {
-		stats[i].LikelyPlayers = topPlayers[stats[i].MachineKey]
-	}
-
-	return stats, nil
-}
-
-// GetTeamMachineAgg returns per-machine aggregate stats (P50, P90) for a
-// team's current roster.
-func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey string) ([]TeamMachineStats, error) {
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id
@@ -69,19 +57,16 @@ func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 			  AND t.season_id = (
 				SELECT MAX(t2.season_id) FROM teams t2 WHERE t2.key = ?
 			  )
-		),
-		scores AS (
-			SELECT
-				g.machine_key,
-				gr.score,
-				ROW_NUMBER() OVER (PARTITION BY g.machine_key ORDER BY gr.score) as rn,
-				COUNT(*) OVER (PARTITION BY g.machine_key) as total
-			FROM game_results gr
-			JOIN players p ON p.id = gr.player_id
-			JOIN games g ON g.id = gr.game_id
-			JOIN matches m ON m.id = g.match_id
-			WHERE p.id IN (SELECT player_id FROM current_roster)
-			  AND g.machine_key IS NOT NULL
+		)
+		SELECT g.machine_key, p.name, COALESCE(ipr.ipr, 0), s.number, gr.score
+		FROM game_results gr
+		JOIN players p ON p.id = gr.player_id
+		LEFT JOIN player_iprs ipr ON ipr.name = p.name
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE p.id IN (SELECT player_id FROM current_roster)
+		  AND g.machine_key IS NOT NULL
 	`
 	args := []any{teamKey, teamKey}
 
@@ -93,23 +78,6 @@ func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 			WHERE v.key = ?)`
 		args = append(args, venueKey, venueKey)
 	}
-
-	query += `
-		),
-		machine_agg AS (
-			SELECT DISTINCT machine_key, total
-			FROM scores
-		)
-		SELECT
-			ma.machine_key,
-			ma.total as games,
-			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total + 1) / 2) as p50,
-			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total * 9 + 9) / 10) as p90
-		FROM machine_agg ma
-		ORDER BY games DESC
-	`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -117,120 +85,78 @@ func (s *SQLiteStore) GetTeamMachineAgg(ctx context.Context, teamKey, venueKey s
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	var stats []TeamMachineStats
+	type player struct {
+		ipr   int
+		games []scoredGame
+	}
+	machines := make(map[string][]scoredGame)
+	players := make(map[string]map[string]*player)
 	for rows.Next() {
-		var ts TeamMachineStats
-		if err := rows.Scan(&ts.MachineKey, &ts.Games, &ts.P50Score, &ts.P90Score); err != nil {
+		var machine, name string
+		var ipr int
+		var g scoredGame
+		if err := rows.Scan(&machine, &name, &ipr, &g.season, &g.score); err != nil {
 			return nil, fmt.Errorf("scan team machine stats: %w", err)
 		}
-		stats = append(stats, ts)
+		machines[machine] = append(machines[machine], g)
+		if players[machine] == nil {
+			players[machine] = make(map[string]*player)
+		}
+		if players[machine][name] == nil {
+			players[machine][name] = &player{ipr: ipr}
+		}
+		players[machine][name].games = append(players[machine][name].games, g)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate team machine stats: %w", err)
 	}
 
-	return stats, nil
-}
+	stats := make([]TeamMachineStats, 0, len(machines))
+	for machine, games := range machines {
+		type ranked struct {
+			LikelyPlayer
 
-// GetTopPlayers returns the top 3 players by play count for each machine,
-// keyed by machine key.
-func (s *SQLiteStore) GetTopPlayers(ctx context.Context, teamKey, venueKey string) (map[string][]LikelyPlayer, error) {
-	query := `
-		WITH current_roster AS (
-			SELECT DISTINCT p.id as player_id
-			FROM players p
-			JOIN rosters r ON r.player_id = p.id
-			JOIN teams t ON t.id = r.team_id
-			WHERE t.key = ?
-			  AND t.season_id = (
-				SELECT MAX(t2.season_id) FROM teams t2 WHERE t2.key = ?
-			  )
-		),
-		player_scores AS (
-			SELECT
-				g.machine_key,
-				gr.player_id,
-				p.name,
-				gr.score,
-				ROW_NUMBER() OVER (PARTITION BY g.machine_key, gr.player_id ORDER BY gr.score) as rn,
-				COUNT(*) OVER (PARTITION BY g.machine_key, gr.player_id) as total
-			FROM game_results gr
-			JOIN players p ON p.id = gr.player_id
-			JOIN games g ON g.id = gr.game_id
-			JOIN matches m ON m.id = g.match_id
-			WHERE p.id IN (SELECT player_id FROM current_roster)
-			  AND g.machine_key IS NOT NULL
-	`
-	args := []any{teamKey, teamKey}
-
-	if venueKey != "" {
-		query += " AND m.venue_id = (SELECT id FROM venues WHERE key = ?)"
-		query += ` AND g.machine_key IN (
-			SELECT vm.machine_key FROM venue_machines vm
-			JOIN venues v ON v.id = vm.venue_id
-			WHERE v.key = ?)`
-		args = append(args, venueKey, venueKey)
-	}
-
-	query += `
-		),
-		player_agg AS (
-			SELECT DISTINCT
-				machine_key,
-				player_id,
-				name,
-				total as games,
-				(SELECT score FROM player_scores ps2
-				 WHERE ps2.machine_key = ps1.machine_key
-				   AND ps2.player_id = ps1.player_id
-				   AND ps2.rn = (ps1.total + 1) / 2
-				) as p50,
-				(SELECT score FROM player_scores ps2
-				 WHERE ps2.machine_key = ps1.machine_key
-				   AND ps2.player_id = ps1.player_id
-				   AND ps2.rn = (ps1.total * 9 + 9) / 10
-				) as p90
-			FROM player_scores ps1
-		),
-		ranked AS (
-			SELECT
-				machine_key,
-				name,
-				games,
-				p50,
-				p90,
-				ROW_NUMBER() OVER (PARTITION BY machine_key ORDER BY games DESC, p50 DESC) as rn
-			FROM player_agg
-		)
-		SELECT r.machine_key, r.name, r.games, r.p50, r.p90, COALESCE(ipr.ipr, 0)
-		FROM ranked r
-		LEFT JOIN player_iprs ipr ON ipr.name = r.name
-		WHERE r.rn <= 3
-		ORDER BY r.machine_key, r.rn
-	`
-
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("query top players: %w", err)
-	}
-	defer rows.Close() //nolint:errcheck // Read-only query.
-
-	result := make(map[string][]LikelyPlayer)
-	for rows.Next() {
-		var machineKey string
-		var lp LikelyPlayer
-		if err := rows.Scan(&machineKey, &lp.Name, &lp.Games, &lp.P50Score, &lp.P90Score, &lp.IPR); err != nil {
-			return nil, fmt.Errorf("scan top player: %w", err)
+			recent float64
 		}
-		result[machineKey] = append(result[machineKey], lp)
+		likely := make([]ranked, 0, len(players[machine]))
+		for name, p := range players[machine] {
+			likely = append(likely, ranked{
+				LikelyPlayer: LikelyPlayer{
+					Name:     name,
+					Games:    len(p.games),
+					P50Score: percentile(p.games, latest, 0.5),
+					P90Score: percentile(p.games, latest, 0.9),
+					IPR:      p.ipr,
+				},
+				recent: plays(p.games, latest),
+			})
+		}
+		slices.SortFunc(likely, func(a, b ranked) int {
+			return cmp.Or(
+				cmp.Compare(b.recent, a.recent),
+				cmp.Compare(b.P50Score, a.P50Score),
+				cmp.Compare(a.Name, b.Name),
+			)
+		})
+
+		ts := TeamMachineStats{
+			MachineKey: machine,
+			Games:      len(games),
+			P50Score:   percentile(games, latest, 0.5),
+			P90Score:   percentile(games, latest, 0.9),
+		}
+		for _, r := range likely[:min(3, len(likely))] {
+			ts.LikelyPlayers = append(ts.LikelyPlayers, r.LikelyPlayer)
+		}
+		stats = append(stats, ts)
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate top players: %w", err)
-	}
+	slices.SortFunc(stats, func(a, b TeamMachineStats) int {
+		return cmp.Or(cmp.Compare(b.Games, a.Games), cmp.Compare(a.MachineKey, b.MachineKey))
+	})
 
-	return result, nil
+	return stats, nil
 }
 
 // GetRosterPicks returns how many games each machine was picked for by
@@ -280,57 +206,51 @@ func (s *SQLiteStore) GetRosterPicks(ctx context.Context, teamKey string) (map[s
 
 // GetLeagueP50 returns the league-wide P50 score for each machine. League P50
 // is computed across all scores by players on any team's current roster.
+// Recent seasons count for more.
 func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, error) {
-	query := `
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get latest season: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
 		WITH current_roster_all AS (
 			SELECT DISTINCT r.player_id
 			FROM rosters r
 			JOIN teams t ON t.id = r.team_id
 			WHERE t.season_id = (SELECT MAX(season_id) FROM teams)
-		),
-		scores AS (
-			SELECT
-				g.machine_key,
-				gr.score,
-				ROW_NUMBER() OVER (PARTITION BY g.machine_key ORDER BY gr.score) as rn,
-				COUNT(*) OVER (PARTITION BY g.machine_key) as total
-			FROM game_results gr
-			JOIN players p ON p.id = gr.player_id
-			JOIN games g ON g.id = gr.game_id
-			WHERE p.id IN (SELECT player_id FROM current_roster_all)
-			  AND g.machine_key IS NOT NULL
-		),
-		machine_agg AS (
-			SELECT DISTINCT machine_key, total
-			FROM scores
 		)
-		SELECT
-			ma.machine_key,
-			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total + 1) / 2) as p50
-		FROM machine_agg ma
-	`
-
-	rows, err := s.db.QueryContext(ctx, query)
+		SELECT g.machine_key, s.number, gr.score
+		FROM game_results gr
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE gr.player_id IN (SELECT player_id FROM current_roster_all)
+		  AND g.machine_key IS NOT NULL
+	`)
 	if err != nil {
 		return nil, fmt.Errorf("query league P50: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	result := make(map[string]float64)
+	machines := make(map[string][]scoredGame)
 	for rows.Next() {
-		var key string
-		var p50 float64
-		if err := rows.Scan(&key, &p50); err != nil {
+		var machine string
+		var g scoredGame
+		if err := rows.Scan(&machine, &g.season, &g.score); err != nil {
 			return nil, fmt.Errorf("scan league P50: %w", err)
 		}
-		result[key] = p50
+		machines[machine] = append(machines[machine], g)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate league P50: %w", err)
 	}
 
+	result := make(map[string]float64, len(machines))
+	for machine, games := range machines {
+		result[machine] = percentile(games, latest, 0.5)
+	}
 	return result, nil
 }
 
@@ -343,22 +263,23 @@ type PlayerMachineStats struct {
 }
 
 // GetSinglePlayerMachineStats returns per-machine stats for a single player.
-// If venueKey is non-empty, filters to games played at that venue.
-// Results are ordered by play count descending.
+// Recent seasons count for more. If venueKey is non-empty, filters to games
+// played at that venue. Results are ordered by play count descending.
 func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]PlayerMachineStats, error) {
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get latest season: %w", err)
+	}
+
 	query := `
-		WITH scores AS (
-			SELECT
-				g.machine_key,
-				gr.score,
-				ROW_NUMBER() OVER (PARTITION BY g.machine_key ORDER BY gr.score) as rn,
-				COUNT(*) OVER (PARTITION BY g.machine_key) as total
-			FROM game_results gr
-			JOIN players p ON p.id = gr.player_id
-			JOIN games g ON g.id = gr.game_id
-			JOIN matches m ON m.id = g.match_id
-			WHERE p.name = ?
-			  AND g.machine_key IS NOT NULL
+		SELECT g.machine_key, s.number, gr.score
+		FROM game_results gr
+		JOIN players p ON p.id = gr.player_id
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE p.name = ?
+		  AND g.machine_key IS NOT NULL
 	`
 	args := []any{playerName}
 
@@ -367,42 +288,38 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 		args = append(args, venueKey)
 	}
 
-	query += `
-		),
-		machine_agg AS (
-			SELECT DISTINCT machine_key, total
-			FROM scores
-		)
-		SELECT
-			ma.machine_key,
-			ma.total as games,
-			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total + 1) / 2) as p50,
-			(SELECT score FROM scores s WHERE s.machine_key = ma.machine_key
-			 AND s.rn = (ma.total * 9 + 9) / 10) as p90
-		FROM machine_agg ma
-		ORDER BY games DESC
-	`
-
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query single player machine stats: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	var stats []PlayerMachineStats
+	machines := make(map[string][]scoredGame)
 	for rows.Next() {
-		var ps PlayerMachineStats
-		if err := rows.Scan(&ps.MachineKey, &ps.Games, &ps.P50Score, &ps.P90Score); err != nil {
+		var machine string
+		var g scoredGame
+		if err := rows.Scan(&machine, &g.season, &g.score); err != nil {
 			return nil, fmt.Errorf("scan single player machine stats: %w", err)
 		}
-		stats = append(stats, ps)
+		machines[machine] = append(machines[machine], g)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate single player machine stats: %w", err)
 	}
 
+	stats := make([]PlayerMachineStats, 0, len(machines))
+	for machine, games := range machines {
+		stats = append(stats, PlayerMachineStats{
+			MachineKey: machine,
+			Games:      len(games),
+			P50Score:   percentile(games, latest, 0.5),
+			P90Score:   percentile(games, latest, 0.9),
+		})
+	}
+	slices.SortFunc(stats, func(a, b PlayerMachineStats) int {
+		return cmp.Or(cmp.Compare(b.Games, a.Games), cmp.Compare(a.MachineKey, b.MachineKey))
+	})
 	return stats, nil
 }
 
@@ -451,10 +368,15 @@ func (s *SQLiteStore) GetMachineNames(ctx context.Context) (map[string]string, e
 
 // GetPlayerMachineStats returns stats for players on a team's current roster.
 // Stats are aggregated across all seasons, but only for players currently on
-// the team (latest season with that team key).
+// the team (latest season with that team key). Recent seasons count for more.
 // If venueKey is non-empty, filters to games played at that venue.
 // Results are ordered by P50 score descending.
 func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machineKey, venueKey string) ([]PlayerStats, error) {
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get latest season: %w", err)
+	}
+
 	query := `
 		WITH current_roster AS (
 			SELECT DISTINCT p.id as player_id
@@ -465,22 +387,16 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 			  AND t.season_id = (
 				SELECT MAX(t2.season_id) FROM teams t2 WHERE t2.key = ?
 			  )
-		),
-		player_scores AS (
-			SELECT
-				p.id as player_id,
-				p.name,
-				COALESCE(pipr.ipr, 0) as ipr,
-				gr.score,
-				ROW_NUMBER() OVER (PARTITION BY p.id ORDER BY gr.score) as rn,
-				COUNT(*) OVER (PARTITION BY p.id) as total
-			FROM game_results gr
-			JOIN players p ON p.id = gr.player_id
-			LEFT JOIN player_iprs pipr ON pipr.name = p.name
-			JOIN games g ON g.id = gr.game_id
-			JOIN matches m ON m.id = g.match_id
-			WHERE g.machine_key = ?
-			  AND p.id IN (SELECT player_id FROM current_roster)
+		)
+		SELECT p.name, COALESCE(ipr.ipr, 0), s.number, gr.score
+		FROM game_results gr
+		JOIN players p ON p.id = gr.player_id
+		LEFT JOIN player_iprs ipr ON ipr.name = p.name
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE g.machine_key = ?
+		  AND p.id IN (SELECT player_id FROM current_roster)
 	`
 	args := []any{teamKey, teamKey, machineKey}
 
@@ -489,42 +405,41 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 		args = append(args, venueKey)
 	}
 
-	query += `
-		),
-		player_agg AS (
-			SELECT DISTINCT player_id, name, ipr, total
-			FROM player_scores
-		)
-		SELECT
-			pa.name,
-			pa.total as games,
-			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
-			 AND ps.rn = (pa.total + 1) / 2) as p50,
-			(SELECT score FROM player_scores ps WHERE ps.player_id = pa.player_id
-			 AND ps.rn = (pa.total * 9 + 9) / 10) as p90,
-			pa.ipr
-		FROM player_agg pa
-		ORDER BY p50 DESC
-	`
-
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query player stats: %w", err)
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	var stats []PlayerStats
+	iprs := make(map[string]int)
+	players := make(map[string][]scoredGame)
 	for rows.Next() {
-		var ps PlayerStats
-		if err := rows.Scan(&ps.Name, &ps.Games, &ps.P50Score, &ps.P90Score, &ps.IPR); err != nil {
+		var name string
+		var ipr int
+		var g scoredGame
+		if err := rows.Scan(&name, &ipr, &g.season, &g.score); err != nil {
 			return nil, fmt.Errorf("scan player stats: %w", err)
 		}
-		stats = append(stats, ps)
+		iprs[name] = ipr
+		players[name] = append(players[name], g)
 	}
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate player stats: %w", err)
 	}
 
+	stats := make([]PlayerStats, 0, len(players))
+	for name, games := range players {
+		stats = append(stats, PlayerStats{
+			Name:     name,
+			Games:    len(games),
+			P50Score: percentile(games, latest, 0.5),
+			P90Score: percentile(games, latest, 0.9),
+			IPR:      iprs[name],
+		})
+	}
+	slices.SortFunc(stats, func(a, b PlayerStats) int {
+		return cmp.Or(cmp.Compare(b.P50Score, a.P50Score), cmp.Compare(a.Name, b.Name))
+	})
 	return stats, nil
 }

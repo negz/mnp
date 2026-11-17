@@ -57,7 +57,8 @@ func (c *Command) Run(d *cache.DB) error {
 	}
 
 	fmt.Println()
-	fmt.Println("Likely: average P50 of each team's two most frequent players on the machine.")
+	fmt.Println("Likely: average P50 of the two players from each team who've played the machine most lately.")
+	fmt.Println("Recent seasons count for more in P50s.")
 	fmt.Println("Picks: times the team's current players picked the machine, for any team, at any venue.")
 	return nil
 }

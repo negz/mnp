@@ -395,6 +395,69 @@ func TestGetRosterPicks(t *testing.T) {
 	}
 }
 
+func TestGetTeamMachineStatsRecency(t *testing.T) {
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	// Alice played TAF twice in season 15, scoring 100 both times.
+	seasonID, err := s.UpsertSeason(ctx, 15)
+	if err != nil {
+		t.Fatalf("UpsertSeason: %v", err)
+	}
+	oldID, err := s.UpsertTeam(ctx, Team{Key: "OLD", Name: "Old Team", SeasonID: seasonID, HomeVenueID: f.stnID})
+	if err != nil {
+		t.Fatalf("UpsertTeam OLD: %v", err)
+	}
+	matchID, err := s.UpsertMatch(ctx, Match{Key: "mnp-15-1-OLD-OLD", SeasonID: seasonID, Week: 1, HomeTeamID: oldID, AwayTeamID: oldID, VenueID: f.stnID})
+	if err != nil {
+		t.Fatalf("UpsertMatch: %v", err)
+	}
+	alice, err := s.UpsertPlayer(ctx, "Alice")
+	if err != nil {
+		t.Fatalf("UpsertPlayer: %v", err)
+	}
+	for round := range 2 {
+		gameID, err := s.InsertGame(ctx, Game{MatchID: matchID, Round: round + 2, MachineKey: "TAF"})
+		if err != nil {
+			t.Fatalf("InsertGame: %v", err)
+		}
+		if err := s.InsertGameResult(ctx, GameResult{GameID: gameID, PlayerID: alice, TeamID: oldID, Position: 1, Score: 100}); err != nil {
+			t.Fatalf("InsertGameResult: %v", err)
+		}
+	}
+
+	got, err := s.GetTeamMachineStats(ctx, "TTT", "STN")
+	if err != nil {
+		t.Fatalf("GetTeamMachineStats: %v", err)
+	}
+
+	// Season 23 TAF scores: Alice 500, Bob 400 and 350. Season 15 games count
+	// a quarter as much as season 23 games toward scores, and almost nothing
+	// toward who's likely to play.
+	//   Team: 100 (.25), 100 (.25), 350, 400, 500 → P50 400, P90 500.
+	//   Alice: 100 (.25), 100 (.25), 500 → P50 500, though she has 3 games.
+	//   Bob has played TAF more lately, so he's listed first despite having
+	//   fewer games.
+	want := []TeamMachineStats{
+		{
+			MachineKey: "TAF", Games: 5, P50Score: 400, P90Score: 500,
+			LikelyPlayers: []LikelyPlayer{
+				{Name: "Bob", Games: 2, P50Score: 350, P90Score: 400, IPR: 2},
+				{Name: "Alice", Games: 3, P50Score: 500, P90Score: 500, IPR: 4},
+			},
+		},
+		{
+			MachineKey: "TZ", Games: 1, P50Score: 100, P90Score: 100,
+			LikelyPlayers: []LikelyPlayer{
+				{Name: "Alice", Games: 1, P50Score: 100, P90Score: 100, IPR: 4},
+			},
+		},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("GetTeamMachineStats(...): -want, +got:\n%s", diff)
+	}
+}
+
 func TestGetLeagueP50(t *testing.T) {
 	// League P50 uses all players on any current-season roster.
 	// TAF: all scores [200, 250, 300, 350, 400, 500] (6 scores)
@@ -446,9 +509,9 @@ func TestGetPlayerMachineStats(t *testing.T) {
 			}},
 		},
 		"NoResults": {
-			reason: "Should return nil when no roster players have results on a machine.",
+			reason: "Should return no stats when no roster players have results on a machine.",
 			args:   args{teamKey: "TTT", machineKey: "NONEXISTENT", venueKey: ""},
-			want:   want{stats: nil},
+			want:   want{stats: []PlayerStats{}},
 		},
 	}
 
