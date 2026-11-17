@@ -2,7 +2,6 @@ package respond
 
 import (
 	"context"
-	"math"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -11,112 +10,6 @@ import (
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/live"
 )
-
-func TestSinglesPoints(t *testing.T) {
-	even := score{mu: 10, sigma: 0.85}
-	strong := score{mu: 10 + 3, sigma: 0.85}
-	weak := score{mu: 10 - 3, sigma: 0.85}
-
-	cases := map[string]struct {
-		reason string
-		ours   score
-		theirs score
-		want   float64
-	}{
-		"Even": {
-			reason: "Evenly matched players should expect half the 3 points.",
-			ours:   even, theirs: even,
-			want: 1.5,
-		},
-		"Strong": {
-			reason: "A much stronger player should expect nearly 3 points.",
-			ours:   strong, theirs: even,
-			want: 3,
-		},
-		"Weak": {
-			reason: "A much weaker player should expect nearly no points.",
-			ours:   weak, theirs: even,
-			want: 0,
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got := singlesPoints(tc.ours, tc.theirs)
-			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 0.05)); diff != "" {
-				t.Errorf("\n%s\nsinglesPoints(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-func TestDoublesPoints(t *testing.T) {
-	even := score{mu: 10, sigma: 0.85}
-	strong := score{mu: 10 + 3, sigma: 0.85}
-
-	cases := map[string]struct {
-		reason string
-		ours   []score
-		theirs []score
-		want   float64
-	}{
-		"Even": {
-			reason: "Evenly matched pairs should expect half the 5 points.",
-			ours:   []score{even, even}, theirs: []score{even, even},
-			want: 2.5,
-		},
-		"Strong": {
-			reason: "A much stronger pair should expect nearly 5 points.",
-			ours:   []score{strong, strong}, theirs: []score{even, even},
-			want: 5,
-		},
-		"OneStrong": {
-			reason: "One much stronger player should win both their points and the combined score, but the even player only half theirs.",
-			ours:   []score{strong, even}, theirs: []score{even, even},
-			want: 4,
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got := doublesPoints(tc.ours, tc.theirs)
-			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 0.05)); diff != "" {
-				t.Errorf("\n%s\ndoublesPoints(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
-
-func TestEstimate(t *testing.T) {
-	cases := map[string]struct {
-		reason string
-		p      Player
-		league float64
-		want   score
-	}{
-		"Unplayed": {
-			reason: "A player who hasn't played a machine should be expected to play like others with their IPR.",
-			p:      Player{IPR: 5},
-			league: 100,
-			want:   score{mu: math.Log(100) + 0.54, sigma: scoreSpread},
-		},
-		"ManyGames": {
-			reason: "A player with many games should be expected to score close to their typical score.",
-			p:      Player{IPR: 1, Games: 98, P50Score: 1000, P90Score: 1000 * math.Exp(scoreSpread*z90)},
-			league: 100,
-			want:   score{mu: (98*math.Log(1000) + 2*(math.Log(100)-0.27)) / 100, sigma: scoreSpread},
-		},
-	}
-
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			got := estimate(tc.p, tc.league)
-			if diff := cmp.Diff(tc.want, got, cmp.AllowUnexported(score{}), cmpopts.EquateApprox(0, 1e-9)); diff != "" {
-				t.Errorf("\n%s\nestimate(...): -want, +got:\n%s", tc.reason, diff)
-			}
-		})
-	}
-}
 
 func TestAssign(t *testing.T) {
 	lineup := func(played ...int) []live.Player {

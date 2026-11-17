@@ -12,6 +12,7 @@ import (
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/output"
+	"github.com/negz/mnp/internal/points"
 )
 
 // Match bonus points need every player in a lineup to play at least 3 games.
@@ -125,10 +126,10 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 		picks = append(picks, p)
 	}
 
-	points := func(game int, players []int) float64 {
+	expect := func(game int, players []int) float64 {
 		return picks[game].points(players, doubles)
 	}
-	plan := assign(len(picks), responder.Lineup, slots, m.Round, points)
+	plan := assign(len(picks), responder.Lineup, slots, m.Round, expect)
 
 	placed := make(map[int]string)
 	for i, ps := range plan {
@@ -139,7 +140,7 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 
 	for i, p := range picks {
 		g := p.game
-		g.Points = points(i, plan[i])
+		g.Points = expect(i, plan[i])
 		for _, o := range plan[i] {
 			g.Suggested = append(g.Suggested, p.options[o])
 		}
@@ -190,9 +191,9 @@ func (s *stats) player(ctx context.Context, p live.Player, machine string) (Play
 // responding team's lineup as an option for it.
 type pick struct {
 	game    Game
-	options []Option // Indexed like the responding team's lineup.
-	ours    []score  // Indexed like the responding team's lineup.
-	theirs  []score
+	options []Option       // Indexed like the responding team's lineup.
+	ours    []points.Score // Indexed like the responding team's lineup.
+	theirs  []points.Score
 }
 
 func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool, league float64) (pick, error) {
@@ -234,13 +235,13 @@ func (p pick) points(players []int, doubles bool) float64 {
 		return 0
 	}
 	if !doubles {
-		return singlesPoints(p.ours[players[0]], p.theirs[0])
+		return points.Singles(p.ours[players[0]], p.theirs[0])
 	}
-	ours := make([]score, len(players))
+	ours := make([]points.Score, len(players))
 	for i, pl := range players {
 		ours[i] = p.ours[pl]
 	}
-	return doublesPoints(ours, p.theirs)
+	return points.Doubles(ours, p.theirs)
 }
 
 // alternatesFor returns the best players for a game other than those suggested
@@ -273,18 +274,24 @@ func byPoints(a, b Option) int {
 // alone returns the points a player expects to win on their own: the whole
 // game in singles, or the points for beating each player on the other team in
 // doubles.
-func alone(ours score, theirs []score, doubles bool) float64 {
+func alone(ours points.Score, theirs []points.Score, doubles bool) float64 {
 	if len(theirs) == 0 {
 		return 0
 	}
 	if !doubles {
-		return singlesPoints(ours, theirs[0])
+		return points.Singles(ours, theirs[0])
 	}
-	var points float64
+	var total float64
 	for _, t := range theirs {
-		points += beats(ours, t)
+		total += points.Beats(ours, t)
 	}
-	return points
+	return total
+}
+
+// estimate returns a player's likely score on a machine.
+func estimate(p Player, league float64) points.Score {
+	s := points.Stats{IPR: p.IPR, Games: p.Games, P50: p.P50Score, P90: p.P90Score}
+	return points.DefaultModel().Score(s, league)
 }
 
 // averageGames returns the average number of games players have played on a
