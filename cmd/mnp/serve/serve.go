@@ -6,15 +6,20 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/negz/mnp/internal/cache"
+	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/web"
 )
 
 // Command starts the MNP web server.
 type Command struct {
-	Addr string `default:":8080" help:"Address to listen on."`
+	Addr      string        `default:":8080"                                                                             help:"Address to listen on."`
+	LiveURL   string        `default:"https://www.mondaynightpinball.com"                                                help:"Site to get matches in progress from. Empty disables live matches."`
+	LiveTTL   time.Duration `default:"30s"                                                                               help:"How long to remember a match in progress before getting it again."`
+	LiveFeeds string        `help:"Read matches in progress from JSON files in this directory instead, for development." hidden:""                                                                 type:"existingdir"`
 }
 
 // Run executes the serve command.
@@ -41,11 +46,22 @@ func (c *Command) Run(d *cache.DB, _ *slog.Logger) error {
 		return st.Refresh(ctx)
 	}, 15*time.Minute, log)
 
+	var opts []web.ServerOption
+	switch {
+	case c.LiveFeeds != "":
+		opts = append(opts, web.WithLiveSource(live.DirSource{Dir: c.LiveFeeds}))
+	case c.LiveURL != "":
+		src := live.NewHTTPSource(c.LiveURL, &http.Client{Timeout: 10 * time.Second},
+			live.WithRecordDir(filepath.Join(cache.Dir(), "live")),
+			live.WithLogger(log))
+		opts = append(opts, web.WithLiveSource(live.NewCachedSource(src, c.LiveTTL)))
+	}
+
 	log.Info("Starting web server", "addr", c.Addr)
 
 	s := &http.Server{
 		Addr:              c.Addr,
-		Handler:           web.WithLogging(web.WithCacheControl(web.NewServer(st, log).Handler(), "public, max-age=60"), log),
+		Handler:           web.WithLogging(web.WithCacheControl(web.NewServer(st, log, opts...).Handler(), "public, max-age=60"), log),
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 	}

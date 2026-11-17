@@ -12,14 +12,17 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/negz/mnp/internal/cache"
 	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/output"
 	"github.com/negz/mnp/internal/strategy/matchup"
 	"github.com/negz/mnp/internal/strategy/player"
 	"github.com/negz/mnp/internal/strategy/recommend"
+	"github.com/negz/mnp/internal/strategy/respond"
 	"github.com/negz/mnp/internal/strategy/scout"
 	"github.com/negz/mnp/internal/version"
 )
@@ -38,18 +41,31 @@ type serverTemplate struct {
 	scout     *template.Template
 	player    *template.Template
 	teams     *template.Template
+	live      *template.Template
 }
 
 // Server serves the MNP web UI.
 type Server struct {
-	store    cache.Store
-	log      *slog.Logger
-	template serverTemplate
+	store       cache.Store
+	live        live.Source
+	suggestions suggestions
+	log         *slog.Logger
+	template    serverTemplate
+}
+
+// A ServerOption configures a Server.
+type ServerOption func(*Server)
+
+// WithLiveSource shows matches in progress from the given source.
+func WithLiveSource(src live.Source) ServerOption {
+	return func(s *Server) {
+		s.live = src
+	}
 }
 
 // NewServer returns a new Server.
-func NewServer(store cache.Store, log *slog.Logger) *Server {
-	return &Server{
+func NewServer(store cache.Store, log *slog.Logger, opts ...ServerOption) *Server {
+	s := &Server{
 		store: store,
 		log:   log,
 		template: serverTemplate{
@@ -60,8 +76,13 @@ func NewServer(store cache.Store, log *slog.Logger) *Server {
 			scout:     parseTemplates("templates/scout.html"),
 			player:    parseTemplates("templates/player.html"),
 			teams:     parseTemplates("templates/teams.html"),
+			live:      parseTemplates("templates/live.html"),
 		},
 	}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
 }
 
 // Handler returns an http.Handler with all routes registered.
@@ -85,6 +106,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /t/{team}", s.handleTeam)
 
 	mux.HandleFunc("GET /matchup", s.handleMatchup)
+
+	mux.HandleFunc("GET /live", s.handleLive)
 
 	mux.HandleFunc("GET /t/{team}/scout", s.handleScout)
 
@@ -169,8 +192,10 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatScore(score)
 		},
-		"formatEdge":  formatEdge,
-		"formatPicks": formatPicks,
+		"formatEdge":   formatEdge,
+		"formatPicks":  formatPicks,
+		"isLive":       isLive,
+		"formatPoints": func(p float64) string { return fmt.Sprintf("%.1f", p) },
 		"side": func(team, vs, machineKey string, players []matchup.LikelyPlayer) matchupSide {
 			return matchupSide{Team: team, Vs: vs, MachineKey: machineKey, Players: players}
 		},
@@ -386,6 +411,7 @@ type matchupData struct {
 	Team2Name string
 
 	Result *matchup.Result
+	Live   *liveData // Set when the teams are playing each other today.
 	Error  string
 }
 
@@ -400,26 +426,70 @@ type matchupSide struct {
 func (s *Server) handleMatchup(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	venues, err := s.store.ListVenues(ctx, "")
+	data, err := s.newMatchupData(ctx, r.URL.Query())
 	if err != nil {
-		s.log.Error("list venues", "err", err)
+		s.log.Error("load matchup data", "err", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
 
-	teams, err := s.store.ListTeams(ctx, "")
+	if data.Venue != "" && data.Team1 != "" && data.Team2 != "" {
+		result, err := matchup.Analyze(ctx, s.store, data.Venue, data.Team1, data.Team2)
+		switch {
+		case err != nil:
+			data.Error = fmt.Sprintf("Error: %v", err)
+		case len(result.Machines) == 0:
+			data.Error = fmt.Sprintf("No machines found at %s.", data.Venue)
+		default:
+			data.Result = result
+			data.Live = s.liveMatch(ctx, data.Team1, data.Team2, false)
+		}
+	}
+
+	if err := s.template.matchup.ExecuteTemplate(w, "layout.html", data); err != nil {
+		s.log.Error("render template", "err", err)
+	}
+}
+
+// handleLive shows team 1 how to respond to team 2's picks in a match being
+// played today.
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	data, err := s.newMatchupData(ctx, r.URL.Query())
 	if err != nil {
-		s.log.Error("list teams", "err", err)
+		s.log.Error("load matchup data", "err", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
+	}
+	data.Live = s.liveMatch(ctx, data.Team1, data.Team2, true)
+
+	// A round moves on within minutes, so don't let browsers reuse the page.
+	w.Header().Set("Cache-Control", "no-cache")
+	if err := s.template.live.ExecuteTemplate(w, "layout.html", data); err != nil {
+		s.log.Error("render template", "err", err)
+	}
+}
+
+// newMatchupData returns data for a matchup between the venue and teams in the
+// query, with their names.
+func (s *Server) newMatchupData(ctx context.Context, q url.Values) (matchupData, error) {
+	venues, err := s.store.ListVenues(ctx, "")
+	if err != nil {
+		return matchupData{}, fmt.Errorf("list venues: %w", err)
+	}
+
+	teams, err := s.store.ListTeams(ctx, "")
+	if err != nil {
+		return matchupData{}, fmt.Errorf("list teams: %w", err)
 	}
 
 	data := matchupData{
 		Venues: venues,
 		Teams:  teams,
-		Venue:  r.URL.Query().Get("venue"),
-		Team1:  r.URL.Query().Get("t1"),
-		Team2:  r.URL.Query().Get("t2"),
+		Venue:  q.Get("venue"),
+		Team1:  q.Get("t1"),
+		Team2:  q.Get("t2"),
 	}
 
 	data.VenueName = data.Venue
@@ -438,22 +508,137 @@ func (s *Server) handleMatchup(w http.ResponseWriter, r *http.Request) {
 			data.Team2Name = t.Name
 		}
 	}
+	return data, nil
+}
 
-	if data.Venue != "" && data.Team1 != "" && data.Team2 != "" {
-		result, err := matchup.Analyze(ctx, s.store, data.Venue, data.Team1, data.Team2)
-		switch {
-		case err != nil:
-			data.Error = fmt.Sprintf("Error: %v", err)
-		case len(result.Machines) == 0:
-			data.Error = fmt.Sprintf("No machines found at %s.", data.Venue)
-		default:
-			data.Result = result
+// liveData is a match between two teams being played today.
+type liveData struct {
+	Match      *live.Match
+	Status     string          // Where the match is, e.g. "Round 2 · DRK picking".
+	Responding bool            // Whether team 1 is responding to team 2's picks.
+	Response   *respond.Result // Suggestions for team 1, if they were asked for.
+}
+
+// liveMatch returns the match between the teams being played today, if
+// there is one. It suggests how team 1 should respond to team 2's picks if
+// suggest is true. Problems are logged rather than returned, so they don't stop
+// the rest of the page rendering.
+func (s *Server) liveMatch(ctx context.Context, team1, team2 string, suggest bool) *liveData {
+	if s.live == nil || team1 == "" || team2 == "" {
+		return nil
+	}
+
+	seattle, _ := time.LoadLocation("America/Los_Angeles")
+	today := time.Now().In(seattle).Format("2006-01-02")
+	matches, err := s.store.ListSchedule(ctx, today)
+	if err != nil {
+		s.log.Error("list schedule", "err", err)
+		return nil
+	}
+	season, err := s.store.MaxSeasonNumber(ctx)
+	if err != nil {
+		s.log.Error("get latest season", "err", err)
+		return nil
+	}
+
+	for _, m := range matches {
+		if m.Date != today {
+			continue
 		}
-	}
+		teams := map[string]bool{m.HomeTeamKey: true, m.AwayTeamKey: true}
+		if !teams[team1] || !teams[team2] {
+			continue
+		}
 
-	if err := s.template.matchup.ExecuteTemplate(w, "layout.html", data); err != nil {
-		s.log.Error("render template", "err", err)
+		key := fmt.Sprintf("mnp-%d-%d-%s-%s", season, m.Week, m.AwayTeamKey, m.HomeTeamKey)
+		lm, err := s.live.Match(ctx, key)
+		if err != nil {
+			s.log.Error("get live match", "match", key, "err", err)
+			return nil
+		}
+
+		data := &liveData{
+			Match:      lm,
+			Status:     status(lm),
+			Responding: lm.State == live.StateResponding && lm.Responder(lm.Round).Key == team1,
+		}
+		if !data.Responding || !suggest {
+			return data
+		}
+		r, err := s.suggestions.get(ctx, s.store, lm)
+		if err != nil {
+			s.log.Error("analyze response", "match", key, "err", err)
+			return data
+		}
+		data.Response = r
+		return data
 	}
+	return nil
+}
+
+// suggestions remembers the suggestions for each match, until the match
+// changes. Working them out takes a while, and a match changes much less often
+// than people look at it.
+type suggestions struct {
+	mu      sync.Mutex
+	matches map[string]suggestion
+}
+
+type suggestion struct {
+	m *live.Match
+	r *respond.Result
+}
+
+func (s *suggestions) get(ctx context.Context, st respond.Store, m *live.Match) (*respond.Result, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Sources return the same match until it might have changed.
+	if c, ok := s.matches[m.Key]; ok && c.m == m {
+		return c.r, nil
+	}
+	r, err := respond.Analyze(ctx, st, m)
+	if err != nil {
+		return nil, err
+	}
+	if s.matches == nil {
+		s.matches = make(map[string]suggestion)
+	}
+	s.matches[m.Key] = suggestion{m: m, r: r}
+	return r, nil
+}
+
+// status describes where a match is.
+func status(m *live.Match) string {
+	round := fmt.Sprintf("Round %d · ", m.Round)
+	switch m.State {
+	case live.StateScheduled, live.StatePregame, live.StateLineups:
+		return "Not started"
+	case live.StatePicking:
+		return round + m.Picker(m.Round).Key + " picking"
+	case live.StateResponding:
+		return round + m.Responder(m.Round).Key + " responding"
+	case live.StatePlaying, live.StateReviewing:
+		return round + "playing"
+	case live.StateTieBreaker:
+		return "Tie breaker"
+	case live.StateComplete:
+		return "Finished"
+	}
+	return string(m.State)
+}
+
+// isLive reports whether a match is under way.
+func isLive(d *liveData) bool {
+	if d == nil {
+		return false
+	}
+	switch d.Match.State {
+	case live.StateScheduled, live.StatePregame, live.StateLineups, live.StateComplete:
+		return false
+	case live.StatePicking, live.StateResponding, live.StatePlaying, live.StateReviewing, live.StateTieBreaker:
+	}
+	return true
 }
 
 // Recommend page.

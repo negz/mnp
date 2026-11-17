@@ -25,6 +25,7 @@ type Store interface { //nolint:interfacebloat // Composes four strategy store i
 	ListVenues(ctx context.Context, search string) ([]db.Venue, error)
 	ListMachines(ctx context.Context, search string) ([]db.Machine, error)
 	ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error)
+	MaxSeasonNumber(ctx context.Context) (int, error)
 }
 
 // An InMemoryStore wraps a Store, caching data that only changes when a sync
@@ -186,6 +187,11 @@ func (s *InMemoryStore) GetMachineNames(_ context.Context) (map[string]string, e
 }
 
 // Passthrough methods.
+
+// MaxSeasonNumber passes through to the underlying store.
+func (s *InMemoryStore) MaxSeasonNumber(ctx context.Context) (int, error) {
+	return s.wrapped.MaxSeasonNumber(ctx)
+}
 
 // ListSchedule passes through to the underlying store.
 func (s *InMemoryStore) ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error) {
