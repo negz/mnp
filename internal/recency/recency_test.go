@@ -1,4 +1,4 @@
-package db
+package recency
 
 import (
 	"testing"
@@ -8,7 +8,7 @@ import (
 
 func TestPercentile(t *testing.T) {
 	type args struct {
-		games  []scoredGame
+		games  []Game
 		latest int
 		p      float64
 	}
@@ -26,7 +26,7 @@ func TestPercentile(t *testing.T) {
 		"MedianOfThree": {
 			reason: "The median of three games from one season should be the second lowest score.",
 			args: args{
-				games:  []scoredGame{{24, 300}, {24, 100}, {24, 200}},
+				games:  []Game{{24, 300}, {24, 100}, {24, 200}},
 				latest: 24,
 				p:      0.5,
 			},
@@ -35,7 +35,7 @@ func TestPercentile(t *testing.T) {
 		"MedianOfTwo": {
 			reason: "The median of two games from one season should be the lower score.",
 			args: args{
-				games:  []scoredGame{{24, 200}, {24, 100}},
+				games:  []Game{{24, 200}, {24, 100}},
 				latest: 24,
 				p:      0.5,
 			},
@@ -44,7 +44,7 @@ func TestPercentile(t *testing.T) {
 		"P90OfTen": {
 			reason: "The 90th percentile of ten games from one season should be the ninth lowest score.",
 			args: args{
-				games: []scoredGame{
+				games: []Game{
 					{24, 1},
 					{24, 2},
 					{24, 3},
@@ -64,7 +64,7 @@ func TestPercentile(t *testing.T) {
 		"MedianOfSixFromLastSeason": {
 			reason: "The median of six games from an older season should still be the third lowest score, despite floating point error in their weights.",
 			args: args{
-				games:  []scoredGame{{23, 6}, {23, 5}, {23, 4}, {23, 3}, {23, 2}, {23, 1}},
+				games:  []Game{{23, 6}, {23, 5}, {23, 4}, {23, 3}, {23, 2}, {23, 1}},
 				latest: 24,
 				p:      0.5,
 			},
@@ -73,7 +73,7 @@ func TestPercentile(t *testing.T) {
 		"OlderGamesCountLess": {
 			reason: "Two games from eight seasons ago should count for less than one recent game.",
 			args: args{
-				games:  []scoredGame{{16, 100}, {16, 100}, {24, 500}},
+				games:  []Game{{16, 100}, {16, 100}, {24, 500}},
 				latest: 24,
 				p:      0.5,
 			},
@@ -83,9 +83,9 @@ func TestPercentile(t *testing.T) {
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := percentile(tc.args.games, tc.args.latest, tc.args.p)
+			got := Percentile(tc.args.games, tc.args.latest, ScoreHalfLife, tc.args.p)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("\n%s\npercentile(...): -want, +got:\n%s", tc.reason, diff)
+				t.Errorf("\n%s\nPercentile(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}
@@ -94,26 +94,26 @@ func TestPercentile(t *testing.T) {
 func TestPlays(t *testing.T) {
 	cases := map[string]struct {
 		reason string
-		games  []scoredGame
+		games  []Game
 		want   float64
 	}{
 		"ThisSeason": {
 			reason: "Games from the latest season should count once each.",
-			games:  []scoredGame{{24, 1}, {24, 2}},
+			games:  []Game{{24, 1}, {24, 2}},
 			want:   2,
 		},
 		"LastSeason": {
 			reason: "A game from last season should count a quarter as much as one from this season.",
-			games:  []scoredGame{{24, 1}, {23, 2}},
+			games:  []Game{{24, 1}, {23, 2}},
 			want:   1.25,
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := plays(tc.games, 24)
+			got := Plays(tc.games, 24, PlayHalfLife)
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("\n%s\nplays(...): -want, +got:\n%s", tc.reason, diff)
+				t.Errorf("\n%s\nPlays(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}
