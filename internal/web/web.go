@@ -188,6 +188,8 @@ func newTemplateFuncs() template.FuncMap {
 // formatEdge describes how a machine is likely to go.
 func formatEdge(m matchup.MachineMatchup, team1, team2 string) string {
 	switch {
+	case m.Favorite == "":
+		return "Neither has played"
 	case m.Team2Likely == 0:
 		return team1 + " only"
 	case m.Team1Likely == 0:

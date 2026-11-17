@@ -231,6 +231,38 @@ func TestAnalyze(t *testing.T) {
 				},
 			},
 		},
+		"NeitherTeamHasPlayed": {
+			reason: "A venue machine neither team has played should still be listed, with no favorite.",
+			args: args{
+				store: &MockStore{
+					MockGetMachineNames: func(_ context.Context) (map[string]string, error) {
+						return map[string]string{"TZ": "Twilight Zone"}, nil
+					},
+					MockGetVenueMachines: func(_ context.Context, _ string) (map[string]bool, error) {
+						return map[string]bool{"TZ": true}, nil
+					},
+					MockGetTeamMachineStats: func(_ context.Context, _, _ string) ([]db.TeamMachineStats, error) {
+						return nil, nil
+					},
+					MockGetRosterPicks: func(_ context.Context, _ string) (map[string]int, error) {
+						return nil, nil
+					},
+				},
+				venue: "SAM",
+				team1: "CRA",
+				team2: "PYC",
+			},
+			want: want{
+				result: &Result{
+					Venue: "SAM",
+					Team1: "CRA",
+					Team2: "PYC",
+					Machines: []MachineMatchup{
+						{MachineKey: "TZ", MachineName: "Twilight Zone", Verdict: VerdictUnknown},
+					},
+				},
+			},
+		},
 		"MachineNotAtVenue": {
 			reason: "Machines that both teams have played but that aren't at the venue should be excluded.",
 			args: args{
@@ -397,6 +429,11 @@ func TestCall(t *testing.T) {
 			args:   args{l1: 10, l2: 10, c1: ConfidenceHigh, c2: ConfidenceHigh},
 			want:   want{favorite: "CRA", verdict: VerdictEven},
 		},
+		"NeitherPlayed": {
+			reason: "There should be no favorite when neither team has played the machine.",
+			args:   args{},
+			want:   want{favorite: "", verdict: VerdictUnknown},
+		},
 		"LowConfidence": {
 			reason: "A big edge should be unknown when either team has low confidence.",
 			args:   args{l1: 10, l2: 30, c1: ConfidenceHigh, c2: ConfidenceLow},
@@ -425,6 +462,7 @@ func TestSortForPicking(t *testing.T) {
 		{MachineName: "Double", Favorite: "CRA", Verdict: VerdictDouble, Edge: 120},
 		{MachineName: "EvenAhead", Favorite: "CRA", Verdict: VerdictEven, Edge: 5},
 		{MachineName: "UnknownOnly", Favorite: "CRA", Verdict: VerdictUnknown, Edge: math.MaxFloat64},
+		{MachineName: "Unplayed", Verdict: VerdictUnknown},
 	}
 
 	sortForPicking(machines, "CRA")
@@ -437,6 +475,7 @@ func TestSortForPicking(t *testing.T) {
 		"Double", "Win",
 		"UnknownOnly", "UnknownWin",
 		"EvenAhead", "EvenBehind",
+		"Unplayed",
 		"UnknownLoss",
 		"Loss", "DoubleLoss",
 	}

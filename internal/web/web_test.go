@@ -44,6 +44,11 @@ func TestFormatEdge(t *testing.T) {
 			m:      matchup.MachineMatchup{Team1Likely: 10, Team2Likely: 10, Favorite: "TTT"},
 			want:   "Not enough data",
 		},
+		"NeitherPlayed": {
+			reason: "A machine neither team has played should say so.",
+			m:      matchup.MachineMatchup{},
+			want:   "Neither has played",
+		},
 		"Team1Only": {
 			reason: "A machine only team 1 has played should say so.",
 			m:      matchup.MachineMatchup{Team1Likely: 10, Team1Confidence: matchup.ConfidenceHigh, Favorite: "TTT"},

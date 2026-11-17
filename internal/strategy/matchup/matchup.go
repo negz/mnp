@@ -41,7 +41,7 @@ type MachineMatchup struct {
 	Team2Players    []LikelyPlayer
 	Team2Picks      int // Games team 2's current players picked this machine for, ever.
 	Team2Confidence Confidence
-	Favorite        string  // The team whose likely players typically score more.
+	Favorite        string  // The team whose likely players typically score more. Empty if neither team has played.
 	Verdict         Verdict // How the machine is likely to go for the favorite.
 	Edge            float64 // % by which one team's likely score exceeds the other's. Positive favors team 1.
 }
@@ -124,12 +124,8 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 
 	machines := make([]MachineMatchup, 0, len(venueMachines))
 	for key := range venueMachines {
-		s1, ok1 := byMachine1[key]
-		s2, ok2 := byMachine2[key]
-		if !ok1 && !ok2 {
-			continue
-		}
-
+		s1 := byMachine1[key]
+		s2 := byMachine2[key]
 		m := MachineMatchup{
 			MachineKey:      key,
 			MachineName:     output.MachineName(names, key),
@@ -159,8 +155,9 @@ func Analyze(ctx context.Context, s Store, venue, team1, team2 string, _ ...Opti
 
 // sortForPicking orders machines for team 1 to pick from: its likely wins, then
 // machines it's favored on without enough data to call, then evens, then
-// machines it's not favored on without enough data, then its likely losses.
-// Machines in each group are ordered by edge.
+// machines neither team has played, then machines it's not favored on without
+// enough data, then its likely losses. Machines in each group are ordered by
+// edge.
 func sortForPicking(machines []MachineMatchup, team1 string) {
 	rank := func(m MachineMatchup) int {
 		ours := m.Favorite == team1
@@ -169,15 +166,19 @@ func sortForPicking(machines []MachineMatchup, team1 string) {
 			if ours {
 				return 0
 			}
-			return 4
+			return 5
 		case VerdictEven:
 			return 2
 		case VerdictUnknown:
 		}
-		if ours {
+		switch {
+		case m.Favorite == "":
+			return 3
+		case ours:
 			return 1
+		default:
+			return 4
 		}
-		return 3
 	}
 	slices.SortFunc(machines, func(a, b MachineMatchup) int {
 		return cmp.Or(
@@ -189,8 +190,12 @@ func sortForPicking(machines []MachineMatchup, team1 string) {
 }
 
 // call returns the team whose likely players typically score more on a
-// machine, and how the machine is likely to go for that team.
+// machine, and how the machine is likely to go for that team. It returns no
+// favorite if neither team has played the machine.
 func call(team1, team2 string, l1, l2 float64, c1, c2 Confidence) (string, Verdict) {
+	if l1 == 0 && l2 == 0 {
+		return "", VerdictUnknown
+	}
 	favorite, hi, lo := team1, l1, l2
 	if l2 > l1 {
 		favorite, hi, lo = team2, l2, l1
