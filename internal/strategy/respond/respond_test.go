@@ -217,3 +217,89 @@ func TestAnalyzeRelativeScore(t *testing.T) {
 		t.Errorf("Analyze(...): -want, +got:\n%s", diff)
 	}
 }
+
+func TestAnalyzeDoubles(t *testing.T) {
+	// Round 1 is picked by the away team, so TTT responds to DRK's pick.
+	theirs := live.Team{Key: "DRK", Lineup: []live.Player{
+		{Key: "a1", Name: "Matt", IPR: 3},
+		{Key: "a2", Name: "Mo", IPR: 3},
+	}}
+	round := []live.Round{{N: 1, Games: []live.Game{{N: 1, Machine: "SternPark", Player1: "a1", Player3: "a2"}}}}
+
+	// Nobody has played the machine, so only how they score relative to
+	// the league tells them apart.
+	s := &fakeStore{relative: map[string]db.RelativeScore{
+		"Pat":  {Games: 100, P50: -1},
+		"Rick": {Games: 100, P50: 1},
+		"Rae":  {Games: 100, P50: 1},
+	}}
+
+	cases := map[string]struct {
+		reason string
+		lineup []live.Player
+		want   *Result
+	}{
+		"BestPair": {
+			reason: "The two strongest players should be suggested together.",
+			lineup: []live.Player{
+				{Key: "h1", Name: "Pat", IPR: 3},
+				{Key: "h2", Name: "Rick", IPR: 3},
+				{Key: "h3", Name: "Rae", IPR: 3},
+			},
+			want: &Result{
+				Match: "mnp-24-10-DRK-TTT", Round: 1, Doubles: true, Picker: "DRK", Responder: "TTT", MaxPoints: 5,
+				Games: []Game{{
+					N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 5,
+					Theirs:    []Player{{Name: "Matt", IPR: 3}, {Name: "Mo", IPR: 3}},
+					Suggested: []Option{{Player: Player{Name: "Rae", IPR: 3}}, {Player: Player{Name: "Rick", IPR: 3}}},
+					FewGames:  true,
+				}},
+				SittingOut: []Player{{Name: "Pat", IPR: 3}},
+			},
+		},
+		"ShortLineup": {
+			reason: "A lineup too short to fill a doubles game should still send who it has.",
+			lineup: []live.Player{
+				{Key: "h1", Name: "Pat", IPR: 3},
+			},
+			want: &Result{
+				Match: "mnp-24-10-DRK-TTT", Round: 1, Doubles: true, Picker: "DRK", Responder: "TTT", MaxPoints: 5,
+				Games: []Game{{
+					N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 5,
+					Theirs:    []Player{{Name: "Matt", IPR: 3}, {Name: "Mo", IPR: 3}},
+					Suggested: []Option{{Player: Player{Name: "Pat", IPR: 3}}},
+					FewGames:  true,
+				}},
+			},
+		},
+	}
+
+	opts := []cmp.Option{
+		cmpopts.IgnoreFields(Option{}, "Points"),
+		cmpopts.IgnoreFields(Game{}, "Points"),
+		cmpopts.IgnoreFields(Result{}, "Points"),
+		cmpopts.EquateEmpty(),
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			m := &live.Match{
+				Key:    "mnp-24-10-DRK-TTT",
+				State:  live.StateResponding,
+				Round:  1,
+				Home:   live.Team{Key: "TTT", Lineup: tc.lineup},
+				Away:   theirs,
+				Rounds: round,
+			}
+			got, err := Analyze(context.Background(), s, m)
+			if err != nil {
+				t.Fatalf("Analyze(...): %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got, opts...); diff != "" {
+				t.Errorf("\n%s\nAnalyze(...): -want, +got:\n%s", tc.reason, diff)
+			}
+			if got.Points <= 0 {
+				t.Errorf("\n%s\nAnalyze(...): want some expected points, got %.2f", tc.reason, got.Points)
+			}
+		})
+	}
+}

@@ -133,7 +133,7 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 	}
 
 	expect := func(game int, players []int) float64 {
-		return picks[game].points(players, doubles)
+		return picks[game].points(players)
 	}
 	plan := assign(len(picks), responder.Lineup, slots, m.Round, expect)
 
@@ -215,9 +215,15 @@ func (s *stats) player(ctx context.Context, p live.Player, machine string, home,
 // responding team's lineup as an option for it.
 type pick struct {
 	game    Game
-	options []Option       // Indexed like the responding team's lineup.
-	ours    []points.Score // Indexed like the responding team's lineup.
-	theirs  []points.Score
+	options []Option // Indexed like the responding team's lineup.
+
+	// expected is the points players in the responding team's lineup expect
+	// to win, indexed by their positions in it. In doubles expected[i][j]
+	// is for players i and j together, and expected[i][i] for player i
+	// without a partner. In singles only expected[i][i] is used. Searching
+	// for the best response asks for the same players many times, so
+	// they're worked out once up front.
+	expected [][]float64
 }
 
 func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool) (pick, error) {
@@ -228,6 +234,7 @@ func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles
 	if doubles {
 		keys = append(keys, g.Player3)
 	}
+	theirs := make([]points.Score, 0, len(keys))
 	for _, k := range keys {
 		lp, ok := m.Player(k)
 		if !ok {
@@ -238,34 +245,55 @@ func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles
 			return pick{}, err
 		}
 		p.game.Theirs = append(p.game.Theirs, t)
-		p.theirs = append(p.theirs, est)
+		theirs = append(theirs, est)
 	}
 
-	for _, lp := range m.Responder(m.Round).Lineup {
+	lineup := m.Responder(m.Round).Lineup
+	ours := make([]points.Score, 0, len(lineup))
+	for _, lp := range lineup {
 		o, est, err := st.player(ctx, lp, g.Machine, !pickerHome, false)
 		if err != nil {
 			return pick{}, err
 		}
-		p.options = append(p.options, Option{Player: o, Points: alone(est, p.theirs, doubles)})
-		p.ours = append(p.ours, est)
+		p.options = append(p.options, Option{Player: o, Points: alone(est, theirs, doubles)})
+		ours = append(ours, est)
+	}
+
+	p.expected = make([][]float64, len(ours))
+	for i := range ours {
+		p.expected[i] = make([]float64, len(ours))
+	}
+	if len(theirs) == 0 {
+		return p, nil
+	}
+	for i := range ours {
+		if !doubles {
+			p.expected[i][i] = points.Singles(ours[i], theirs[0])
+			continue
+		}
+		for j := i; j < len(ours); j++ {
+			pair := []points.Score{ours[i], ours[j]}
+			if j == i {
+				pair = pair[:1]
+			}
+			p.expected[i][j] = points.Doubles(pair, theirs)
+			p.expected[j][i] = p.expected[i][j]
+		}
 	}
 	return p, nil
 }
 
 // points returns the points the given players, indexed like the responding
 // team's lineup, expect to win on the pick.
-func (p pick) points(players []int, doubles bool) float64 {
-	if len(p.theirs) == 0 || len(players) == 0 {
+func (p pick) points(players []int) float64 {
+	switch len(players) {
+	case 0:
 		return 0
+	case 1:
+		return p.expected[players[0]][players[0]]
+	default:
+		return p.expected[players[0]][players[1]]
 	}
-	if !doubles {
-		return points.Singles(p.ours[players[0]], p.theirs[0])
-	}
-	ours := make([]points.Score, len(players))
-	for i, pl := range players {
-		ours[i] = p.ours[pl]
-	}
-	return points.Doubles(ours, p.theirs)
 }
 
 // alternatesFor returns the best players for a game other than those suggested
