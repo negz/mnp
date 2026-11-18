@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -192,10 +193,11 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatScore(score)
 		},
-		"formatEdge":   formatEdge,
-		"formatPicks":  formatPicks,
-		"isLive":       isLive,
-		"formatPoints": func(p float64) string { return fmt.Sprintf("%.1f", p) },
+		"formatEdge":    formatEdge,
+		"formatPicks":   formatPicks,
+		"isLive":        isLive,
+		"formatPoints":  func(p float64) string { return fmt.Sprintf("%.0f", math.Round(p)) },
+		"formatPercent": formatPercent,
 		"side": func(team, vs, machineKey string, players []matchup.LikelyPlayer) matchupSide {
 			return matchupSide{Team: team, Vs: vs, MachineKey: machineKey, Players: players}
 		},
@@ -960,5 +962,18 @@ func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.template.teams.ExecuteTemplate(w, "layout.html", teamsData{Teams: teams}); err != nil {
 		s.log.Error("render template", "err", err)
+	}
+}
+
+// formatPercent formats a probability as a whole percentage. Rounding would show
+// an outcome that isn't certain as 0% or 100%, so those show as <1% and >99%.
+func formatPercent(p float64) string {
+	switch pct := math.Round(p * 100); {
+	case pct < 1:
+		return "<1%"
+	case pct > 99:
+		return ">99%"
+	default:
+		return fmt.Sprintf("%.0f%%", pct)
 	}
 }

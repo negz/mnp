@@ -29,6 +29,7 @@ package points
 import (
 	"cmp"
 	"math"
+	"math/rand/v2"
 )
 
 // A Model estimates a player's score on a machine. Pinball scores vary a lot
@@ -185,6 +186,48 @@ func Doubles(ours, theirs []Score) float64 {
 		}
 	}
 	return points + Beats(Sum(ours), Sum(theirs))
+}
+
+// doublesGames is how many doubles games DoublesWin simulates. Its estimates
+// are within about a percentage point.
+const doublesGames = 20_000
+
+// DoublesWin returns the probability that a pair wins a doubles game, taking 3
+// or more of its 5 points. The same scores decide every point,
+// so the points aren't independent and there's no simple formula. Instead it
+// simulates games, always with the same random numbers, so it returns the same
+// estimate for the same pairs.
+func DoublesWin(ours, theirs []Score) float64 {
+	ours, theirs = pair(ours), pair(theirs)
+	rng := rand.New(rand.NewPCG(1, 2)) //nolint:gosec // Simulation, not security.
+
+	o, t := make([]float64, len(ours)), make([]float64, len(theirs))
+	won := 0
+	for range doublesGames {
+		var points, ourTotal, theirTotal float64
+		for i, s := range ours {
+			o[i] = math.Exp(s.Mu + s.Sigma*rng.NormFloat64())
+			ourTotal += o[i]
+		}
+		for j, s := range theirs {
+			t[j] = math.Exp(s.Mu + s.Sigma*rng.NormFloat64())
+			theirTotal += t[j]
+		}
+		for i := range o {
+			for j := range t {
+				if o[i] > t[j] {
+					points++
+				}
+			}
+		}
+		if ourTotal > theirTotal {
+			points++
+		}
+		if points >= 3 {
+			won++
+		}
+	}
+	return float64(won) / doublesGames
 }
 
 // pair fills out a doubles team that's missing a player. The league scores a

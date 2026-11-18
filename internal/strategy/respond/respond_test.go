@@ -2,6 +2,7 @@ package respond
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -28,36 +29,43 @@ func TestAssign(t *testing.T) {
 	singles := func(game int, players []int) float64 { return value[game][players[0]] }
 
 	cases := map[string]struct {
-		reason string
-		lineup []live.Player
-		round  int
-		want   [][]int
+		reason   string
+		lineup   []live.Player
+		round    int
+		wantPlan [][]int
+		wantCost []float64
 	}{
 		"BestOverall": {
-			reason: "Player 0 should play where they're worth most, not on every game.",
-			lineup: lineup(0, 0, 0, 0),
-			round:  2,
-			want:   [][]int{{0}, {1}},
+			reason:   "Player 0 should play where they're worth most, not on every game.",
+			lineup:   lineup(0, 0, 0, 0),
+			round:    2,
+			wantPlan: [][]int{{0}, {1}},
+			wantCost: []float64{3.9 - 1, 3.9 - 3},
 		},
 		"MustPlay": {
-			reason: "Player 3 has sat out once, so they must play the rest of the match, even though player 1 is worth more.",
-			lineup: lineup(2, 2, 2, 1),
-			round:  3,
-			want:   [][]int{{0}, {3}},
+			reason:   "Player 3 has sat out once, so they must play the rest of the match, even though player 1 is worth more.",
+			lineup:   lineup(2, 2, 2, 1),
+			round:    3,
+			wantPlan: [][]int{{0}, {3}},
+			wantCost: []float64{3 - 1, 3 - 1},
 		},
 		"MustPlayOther": {
-			reason: "Players 2 and 3 have sat out once, so they must play the rest of the match.",
-			lineup: lineup(2, 2, 1, 1),
-			round:  3,
-			want:   [][]int{{2}, {3}},
+			reason:   "Players 2 and 3 have sat out once, so they must play the rest of the match.",
+			lineup:   lineup(2, 2, 1, 1),
+			round:    3,
+			wantPlan: [][]int{{2}, {3}},
+			wantCost: []float64{0, 0},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := assign(2, tc.lineup, 1, tc.round, singles)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Errorf("\n%s\nassign(...): -want, +got:\n%s", tc.reason, diff)
+			plan, cost := assign(2, tc.lineup, 1, tc.round, singles)
+			if diff := cmp.Diff(tc.wantPlan, plan); diff != "" {
+				t.Errorf("\n%s\nassign(...): -want plan, +got plan:\n%s", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.wantCost, cost, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
+				t.Errorf("\n%s\nassign(...): -want cost, +got cost:\n%s", tc.reason, diff)
 			}
 		})
 	}
@@ -78,9 +86,12 @@ func TestAssignFullLineup(t *testing.T) {
 		}
 		return 1
 	}
-	got := assign(1, players, 1, 4, points)
-	if diff := cmp.Diff([][]int{{1}}, got); diff != "" {
-		t.Errorf("A player in a full lineup shouldn't play a 4th game: -want, +got:\n%s", diff)
+	plan, cost := assign(1, players, 1, 4, points)
+	if diff := cmp.Diff([][]int{{1}}, plan); diff != "" {
+		t.Errorf("A player in a full lineup shouldn't play a 4th game: -want plan, +got plan:\n%s", diff)
+	}
+	if diff := cmp.Diff([]float64{math.Inf(1)}, cost); diff != "" {
+		t.Errorf("Nobody else in a full lineup can play the last game: -want cost, +got cost:\n%s", diff)
 	}
 }
 
@@ -148,7 +159,7 @@ func TestAnalyze(t *testing.T) {
 	}
 	opts := []cmp.Option{
 		cmpopts.IgnoreFields(Option{}, "Points"),
-		cmpopts.IgnoreFields(Game{}, "Points"),
+		cmpopts.IgnoreFields(Game{}, "Points", "Win"),
 		cmpopts.IgnoreFields(Result{}, "Points"),
 		cmpopts.EquateEmpty(),
 	}
@@ -203,13 +214,13 @@ func TestAnalyzeRelativeScore(t *testing.T) {
 			N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 3,
 			Theirs:    []Player{{Name: "Rick", IPR: 5, Games: 36, P50Score: 190_000_000, P90Score: 367_000_000}},
 			Suggested: []Option{{Player: Player{Name: "Matt", IPR: 3}}},
-			FewGames:  true,
+			ClearPick: true,
 		}},
 		SittingOut: []Player{{Name: "Pat", IPR: 3}},
 	}
 	opts := []cmp.Option{
 		cmpopts.IgnoreFields(Option{}, "Points"),
-		cmpopts.IgnoreFields(Game{}, "Points"),
+		cmpopts.IgnoreFields(Game{}, "Points", "Win"),
 		cmpopts.IgnoreFields(Result{}, "Points"),
 		cmpopts.EquateEmpty(),
 	}
@@ -232,15 +243,17 @@ func TestAnalyzeDoubles(t *testing.T) {
 		"Pat":  {Games: 100, P50: -1},
 		"Rick": {Games: 100, P50: 1},
 		"Rae":  {Games: 100, P50: 1},
+		"Ray":  {Games: 100, P50: 1},
 	}}
 
 	cases := map[string]struct {
-		reason string
-		lineup []live.Player
-		want   *Result
+		reason   string
+		lineup   []live.Player
+		want     *Result
+		favoured bool
 	}{
 		"BestPair": {
-			reason: "The two strongest players should be suggested together.",
+			reason: "The two strongest players should be suggested together, as a clear pick, and be favoured to win.",
 			lineup: []live.Player{
 				{Key: "h1", Name: "Pat", IPR: 3},
 				{Key: "h2", Name: "Rick", IPR: 3},
@@ -252,13 +265,32 @@ func TestAnalyzeDoubles(t *testing.T) {
 					N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 5,
 					Theirs:    []Player{{Name: "Matt", IPR: 3}, {Name: "Mo", IPR: 3}},
 					Suggested: []Option{{Player: Player{Name: "Rae", IPR: 3}}, {Player: Player{Name: "Rick", IPR: 3}}},
-					FewGames:  true,
+					ClearPick: true,
 				}},
 				SittingOut: []Player{{Name: "Pat", IPR: 3}},
 			},
+			favoured: true,
+		},
+		"NotClearPick": {
+			reason: "With another player as strong as those suggested, the suggestion shouldn't be a clear pick.",
+			lineup: []live.Player{
+				{Key: "h1", Name: "Rick", IPR: 3},
+				{Key: "h2", Name: "Rae", IPR: 3},
+				{Key: "h3", Name: "Ray", IPR: 3},
+			},
+			want: &Result{
+				Match: "mnp-24-10-DRK-TTT", Round: 1, Doubles: true, Picker: "DRK", Responder: "TTT", MaxPoints: 5,
+				Games: []Game{{
+					N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 5,
+					Theirs:    []Player{{Name: "Matt", IPR: 3}, {Name: "Mo", IPR: 3}},
+					Suggested: []Option{{Player: Player{Name: "Rae", IPR: 3}}, {Player: Player{Name: "Rick", IPR: 3}}},
+				}},
+				SittingOut: []Player{{Name: "Ray", IPR: 3}},
+			},
+			favoured: true,
 		},
 		"ShortLineup": {
-			reason: "A lineup too short to fill a doubles game should still send who it has.",
+			reason: "A lineup too short to fill a doubles game should still send who it has, and isn't a clear pick because nobody else could go.",
 			lineup: []live.Player{
 				{Key: "h1", Name: "Pat", IPR: 3},
 			},
@@ -268,7 +300,6 @@ func TestAnalyzeDoubles(t *testing.T) {
 					N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 5,
 					Theirs:    []Player{{Name: "Matt", IPR: 3}, {Name: "Mo", IPR: 3}},
 					Suggested: []Option{{Player: Player{Name: "Pat", IPR: 3}}},
-					FewGames:  true,
 				}},
 			},
 		},
@@ -276,7 +307,7 @@ func TestAnalyzeDoubles(t *testing.T) {
 
 	opts := []cmp.Option{
 		cmpopts.IgnoreFields(Option{}, "Points"),
-		cmpopts.IgnoreFields(Game{}, "Points"),
+		cmpopts.IgnoreFields(Game{}, "Points", "Win"),
 		cmpopts.IgnoreFields(Result{}, "Points"),
 		cmpopts.EquateEmpty(),
 	}
@@ -299,6 +330,9 @@ func TestAnalyzeDoubles(t *testing.T) {
 			}
 			if got.Points <= 0 {
 				t.Errorf("\n%s\nAnalyze(...): want some expected points, got %.2f", tc.reason, got.Points)
+			}
+			if win := got.Games[0].Win; (win > 0.5) != tc.favoured {
+				t.Errorf("\n%s\nAnalyze(...): want favoured %t, got a %.0f%% chance to win", tc.reason, tc.favoured, win*100)
 			}
 		})
 	}

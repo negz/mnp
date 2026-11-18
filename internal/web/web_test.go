@@ -172,3 +172,25 @@ func TestSuggestionsDontWaitOnOtherMatches(t *testing.T) {
 		t.Errorf("get(slow): %v", err)
 	}
 }
+
+func TestFormatPercent(t *testing.T) {
+	cases := map[string]struct {
+		p    float64
+		want string
+	}{
+		"Whole":         {p: 0.62, want: "62%"},
+		"RoundsUp":      {p: 0.625, want: "63%"},
+		"NearlyCertain": {p: 0.996, want: ">99%"},
+		"Certain":       {p: 1, want: ">99%"},
+		"Unlikely":      {p: 0.01, want: "1%"},
+		"NearlyNever":   {p: 0.004, want: "<1%"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if diff := cmp.Diff(tc.want, formatPercent(tc.p)); diff != "" {
+				t.Errorf("formatPercent(%v): -want, +got:\n%s", tc.p, diff)
+			}
+		})
+	}
+}

@@ -150,3 +150,56 @@ func TestScore(t *testing.T) {
 		})
 	}
 }
+
+func TestDoublesWin(t *testing.T) {
+	even := Score{Mu: 10, Sigma: 0.9}
+	strong := Score{Mu: 10 + 3, Sigma: 0.9}
+	weak := Score{Mu: 10 - 3, Sigma: 0.9}
+
+	cases := map[string]struct {
+		reason string
+		ours   []Score
+		theirs []Score
+		want   float64
+	}{
+		"Even": {
+			reason: "Evenly matched pairs should each win half the time.",
+			ours:   []Score{even, even}, theirs: []Score{even, even},
+			want: 0.5,
+		},
+		"Strong": {
+			reason: "A much stronger pair should nearly always win.",
+			ours:   []Score{strong, strong}, theirs: []Score{even, even},
+			want: 1,
+		},
+		"OneStrong": {
+			reason: "One much stronger player wins both their points and the combined score, so their pair should nearly always win.",
+			ours:   []Score{strong, even}, theirs: []Score{even, even},
+			want: 0.98,
+		},
+		"MissingPlayer": {
+			reason: "A missing player scores 1, so their partner has to outscore both opponents combined, as with a much weaker partner.",
+			ours:   []Score{even}, theirs: []Score{even, even},
+			want: 0.23,
+		},
+		"TheirMissingPlayer": {
+			reason: "Against a missing player, a pair wins both of those points, and loses only if the other player outscores them both combined.",
+			ours:   []Score{even, even}, theirs: []Score{even},
+			want: 1 - 0.23,
+		},
+		"OneWeak": {
+			reason: "With one much weaker player, a pair needs the other player to outscore both opponents combined, which an even player does about 23% of the time.",
+			ours:   []Score{weak, even}, theirs: []Score{even, even},
+			want: 0.23,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got := DoublesWin(tc.ours, tc.theirs)
+			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 0.02)); diff != "" {
+				t.Errorf("\n%s\nDoublesWin(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
