@@ -343,6 +343,7 @@ type teamMatchJSON struct {
 type lineupJSON struct {
 	Key  string `json:"key"`
 	Name string `json:"name"`
+	IPR  int    `json:"IPR"`
 }
 
 type roundJSON struct {
@@ -399,6 +400,8 @@ type ResultData struct {
 	Score      int64
 	Position   int
 	IsHome     bool
+	IPR        int     // The player's IPR at the time of the match.
+	Points     float64 // Points the player won, including any share of a team bonus.
 }
 
 // Extract reads and decodes match data from a match file.
@@ -418,12 +421,12 @@ func decodeJSONFile(path string, v any) error {
 
 // Transform resolves player hashes to names and builds clean game results.
 func (m *Match) Transform() MatchData {
-	playerNames := make(map[string]string)
+	lineup := make(map[string]lineupJSON)
 	for _, p := range m.raw.Home.Lineup {
-		playerNames[p.Key] = p.Name
+		lineup[p.Key] = p
 	}
 	for _, p := range m.raw.Away.Lineup {
-		playerNames[p.Key] = p.Name
+		lineup[p.Key] = p
 	}
 
 	weekNum, _ := strconv.Atoi(m.raw.Week)
@@ -439,7 +442,7 @@ func (m *Match) Transform() MatchData {
 				Round:      r.N,
 				MachineKey: g.Machine,
 				IsDoubles:  isDoubles,
-				Results:    buildResults(g, playerNames, r.N, isDoubles),
+				Results:    buildResults(g, lineup, r.N, isDoubles),
 			})
 		}
 	}
@@ -458,23 +461,24 @@ func (m *Match) Transform() MatchData {
 // buildResults constructs player results for a game, resolving hashes to names.
 // The team that picked the machine plays as player 1 (and 3 in doubles). The
 // away team picks rounds 1 and 3, and the home team picks rounds 2 and 4.
-func buildResults(g gameJSON, playerNames map[string]string, round int, isDoubles bool) []ResultData {
+func buildResults(g gameJSON, lineup map[string]lineupJSON, round int, isDoubles bool) []ResultData {
 	type raw struct {
 		hash   string
 		score  int64
+		points float64
 		pos    int
 		isHome bool
 	}
 
 	homePicked := round == 2 || round == 4
 	raws := []raw{
-		{hash: g.Player1, score: g.Score1, pos: 1, isHome: homePicked},
-		{hash: g.Player2, score: g.Score2, pos: 2, isHome: !homePicked},
+		{hash: g.Player1, score: g.Score1, points: g.Points1, pos: 1, isHome: homePicked},
+		{hash: g.Player2, score: g.Score2, points: g.Points2, pos: 2, isHome: !homePicked},
 	}
 	if isDoubles {
 		raws = append(raws,
-			raw{hash: g.Player3, score: g.Score3, pos: 3, isHome: homePicked},
-			raw{hash: g.Player4, score: g.Score4, pos: 4, isHome: !homePicked},
+			raw{hash: g.Player3, score: g.Score3, points: g.Points3, pos: 3, isHome: homePicked},
+			raw{hash: g.Player4, score: g.Score4, points: g.Points4, pos: 4, isHome: !homePicked},
 		)
 	}
 
@@ -483,15 +487,17 @@ func buildResults(g gameJSON, playerNames map[string]string, round int, isDouble
 		if r.hash == "" {
 			continue
 		}
-		name, ok := playerNames[r.hash]
+		p, ok := lineup[r.hash]
 		if !ok {
 			continue
 		}
 		results = append(results, ResultData{
-			PlayerName: name,
+			PlayerName: p.Name,
 			Score:      r.score,
 			Position:   r.pos,
 			IsHome:     r.isHome,
+			IPR:        p.IPR,
+			Points:     r.points,
 		})
 	}
 	return results
