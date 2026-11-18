@@ -26,7 +26,10 @@
 //     no difference above two seasons.
 package points
 
-import "math"
+import (
+	"cmp"
+	"math"
+)
 
 // A Model estimates a player's score on a machine. Pinball scores vary a lot
 // from game to game, so a score is modelled as log-normal.
@@ -150,7 +153,12 @@ func blend(estimate float64, n int, prior, k float64) float64 {
 
 // Beats returns the probability that a scores more than b.
 func Beats(a, b Score) float64 {
-	return phi((a.Mu - b.Mu) / math.Hypot(a.Sigma, b.Sigma))
+	s := math.Hypot(a.Sigma, b.Sigma)
+	if s == 0 {
+		// Neither score varies, e.g. two missing players.
+		return (1 + float64(cmp.Compare(a.Mu, b.Mu))) / 2
+	}
+	return phi((a.Mu - b.Mu) / s)
 }
 
 // Singles returns the points a player expects from a singles game. A player
@@ -169,6 +177,7 @@ func Singles(ours, theirs Score) float64 {
 // gets a point for each player on the other team they beat, and the pair with
 // the higher combined score gets one more.
 func Doubles(ours, theirs []Score) float64 {
+	ours, theirs = pair(ours), pair(theirs)
 	var points float64
 	for _, o := range ours {
 		for _, t := range theirs {
@@ -176,6 +185,17 @@ func Doubles(ours, theirs []Score) float64 {
 		}
 	}
 	return points + Beats(Sum(ours), Sum(theirs))
+}
+
+// pair fills out a doubles team that's missing a player. The league scores a
+// missing player 1 in every game, which is a log score of 0 that never varies.
+func pair(scores []Score) []Score {
+	if len(scores) >= 2 {
+		return scores
+	}
+	out := make([]Score, 2)
+	copy(out, scores)
+	return out
 }
 
 // Sum approximates the sum of log-normal scores as another log-normal score,

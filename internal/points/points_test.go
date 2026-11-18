@@ -71,6 +71,16 @@ func TestDoubles(t *testing.T) {
 			ours:   []Score{strong, even}, theirs: []Score{even, even},
 			want: 4,
 		},
+		"MissingPlayer": {
+			reason: "A missing player scores 1 and beats nobody, and their partner only wins the combined score by outscoring both opponents.",
+			ours:   []Score{even}, theirs: []Score{even, even},
+			want: 1 + 0.23,
+		},
+		"TheirMissingPlayer": {
+			reason: "Against a missing player, a pair wins both of those points, half the others, and the combined score unless the other player outscores them both.",
+			ours:   []Score{even, even}, theirs: []Score{even},
+			want: 2 + 1 + (1 - 0.23),
+		},
 	}
 
 	for name, tc := range cases {
