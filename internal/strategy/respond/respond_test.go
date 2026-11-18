@@ -85,7 +85,8 @@ func TestAssignFullLineup(t *testing.T) {
 }
 
 type fakeStore struct {
-	stats map[string][]db.PlayerMachineStats
+	stats    map[string][]db.PlayerMachineStats
+	relative map[string]db.RelativeScore
 }
 
 func (s *fakeStore) GetLeagueP50(_ context.Context) (map[string]float64, error) {
@@ -98,6 +99,10 @@ func (s *fakeStore) GetMachineNames(_ context.Context) (map[string]string, error
 
 func (s *fakeStore) GetSinglePlayerMachineStats(_ context.Context, name, _ string) ([]db.PlayerMachineStats, error) {
 	return s.stats[name], nil
+}
+
+func (s *fakeStore) GetRelativeScore(_ context.Context, name string, _ map[string]float64) (db.RelativeScore, error) {
+	return s.relative[name], nil
 }
 
 func TestAnalyze(t *testing.T) {
@@ -152,5 +157,63 @@ func TestAnalyze(t *testing.T) {
 	}
 	if got.Points <= 0 || got.Points >= 1.5 {
 		t.Errorf("Analyze(...): Matt should expect fewer points than Rick, but more than none: got %.2f", got.Points)
+	}
+}
+
+func TestAnalyzeRelativeScore(t *testing.T) {
+	m := &live.Match{
+		Key:   "mnp-24-10-DRK-TTT",
+		State: live.StateResponding,
+		Round: 2,
+		Home: live.Team{Key: "TTT", Lineup: []live.Player{
+			{Key: "h1", Name: "Rick", IPR: 5},
+		}},
+		Away: live.Team{Key: "DRK", Lineup: []live.Player{
+			{Key: "a1", Name: "Pat", IPR: 3},
+			{Key: "a2", Name: "Matt", IPR: 3},
+		}},
+		Rounds: []live.Round{
+			{N: 2, Games: []live.Game{{N: 1, Machine: "SternPark", Player1: "h1"}}},
+		},
+	}
+	// Neither DRK player has played the machine, but Matt typically scores
+	// well above the league and Pat well below.
+	s := &fakeStore{
+		stats: map[string][]db.PlayerMachineStats{
+			"Rick": {{MachineKey: "SternPark", Games: 36, P50Score: 190_000_000, P90Score: 367_000_000}},
+		},
+		relative: map[string]db.RelativeScore{
+			"Pat":  {Games: 100, P50: -1},
+			"Matt": {Games: 100, P50: 1},
+		},
+	}
+
+	got, err := Analyze(context.Background(), s, m)
+	if err != nil {
+		t.Fatalf("Analyze(...): %v", err)
+	}
+
+	want := &Result{
+		Match:     "mnp-24-10-DRK-TTT",
+		Round:     2,
+		Picker:    "TTT",
+		Responder: "DRK",
+		MaxPoints: 3,
+		Games: []Game{{
+			N: 1, MachineKey: "SternPark", MachineName: "Stern Jurassic Park", MaxPoints: 3,
+			Theirs:    []Player{{Name: "Rick", IPR: 5, Games: 36, P50Score: 190_000_000, P90Score: 367_000_000}},
+			Suggested: []Option{{Player: Player{Name: "Matt", IPR: 3}}},
+			FewGames:  true,
+		}},
+		SittingOut: []Player{{Name: "Pat", IPR: 3}},
+	}
+	opts := []cmp.Option{
+		cmpopts.IgnoreFields(Option{}, "Points"),
+		cmpopts.IgnoreFields(Game{}, "Points"),
+		cmpopts.IgnoreFields(Result{}, "Points"),
+		cmpopts.EquateEmpty(),
+	}
+	if diff := cmp.Diff(want, got, opts...); diff != "" {
+		t.Errorf("Analyze(...): -want, +got:\n%s", diff)
 	}
 }

@@ -26,6 +26,7 @@ type Store interface { //nolint:interfacebloat // Composes four strategy store i
 	ListMachines(ctx context.Context, search string) ([]db.Machine, error)
 	ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error)
 	MaxSeasonNumber(ctx context.Context) (int, error)
+	GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error)
 }
 
 // An InMemoryStore wraps a Store, caching data that only changes when a sync
@@ -226,4 +227,9 @@ func (s *InMemoryStore) GetPlayer(ctx context.Context, playerName string) (db.Pl
 // GetSinglePlayerMachineStats passes through to the underlying store.
 func (s *InMemoryStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error) {
 	return s.wrapped.GetSinglePlayerMachineStats(ctx, playerName, venueKey)
+}
+
+// GetRelativeScore passes through to the underlying store.
+func (s *InMemoryStore) GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error) {
+	return s.wrapped.GetRelativeScore(ctx, playerName, league)
 }

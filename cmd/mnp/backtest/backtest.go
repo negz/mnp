@@ -4,7 +4,6 @@ package backtest
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/negz/mnp/internal/backtest"
 	"github.com/negz/mnp/internal/cache"
@@ -16,26 +15,33 @@ import (
 
 // Command measures how well the points model predicts past games.
 type Command struct {
-	Archive string `help:"Path to the MNP data archive. Defaults to the cached archive." type:"existingdir"`
-	From    int    `default:"16"                                                         help:"First season to measure."`
-	To      int    `default:"22"                                                         help:"Last season to measure."`
+	Archive string `help:"Path to the MNP data archive. Defaults to the cached archive."                      type:"existingdir"`
+	From    int    `default:"16"                                                                              help:"First season to measure."`
+	To      int    `default:"22"                                                                              help:"Last season to measure."`
+	Tune    bool   `help:"Tune the model's parameters on the measured seasons, starting from the given ones."`
 
-	HalfLife         float64   `help:"Seasons for a score to count half as much."`
-	Spread           float64   `help:"Default standard deviation of log scores."`
-	PriorGames       float64   `help:"Games of evidence the IPR prior for a player's typical score is worth."`
-	PriorSpreadGames float64   `help:"Games of evidence the default spread is worth."`
-	IPROffsets       []float64 `help:"Log score offset from the league's typical score for IPR 1 to 6."       name:"ipr-offsets"`
+	HalfLife     float64   `help:"Seasons for a score to count half as much."`
+	Spread       *float64  `help:"Standard deviation of log scores."`
+	LeagueGames  *float64  `help:"League games of evidence a player's IPR is worth."`
+	MachineGames *float64  `help:"Games of evidence the estimate before a player's own scores on a machine is worth."`
+	Unplayed     *float64  `help:"Log score penalty for a machine a player hasn't played."`
+	Picked       *float64  `help:"Log score bonus for the team that picked the machine."`
+	Home         *float64  `help:"Log score bonus for the home team."`
+	IPROffsets   []float64 `help:"Log score offset from the league's typical score for IPR 0 (unrated) to 6."         name:"ipr-offsets"`
 }
 
 // Run executes the backtest command.
 func (c *Command) Run() error {
 	archive := c.Archive
 	if archive == "" {
-		archive = filepath.Join(cache.Dir(), "mnp-data-archive")
+		archive = cache.ArchiveDir()
 	}
 	seasons, err := mnp.ReadSeasons(archive)
 	if err != nil {
 		return fmt.Errorf("read archive: %w", err)
+	}
+	if len(seasons) == 0 {
+		return fmt.Errorf("no seasons in archive %s", archive)
 	}
 
 	halfLife := recency.ScoreHalfLife
@@ -52,6 +58,11 @@ func (c *Command) Run() error {
 		if g.Season >= c.From && g.Season <= c.To {
 			games = append(games, g)
 		}
+	}
+
+	if c.Tune {
+		m = backtest.Tune(games, m)
+		fmt.Printf("Tuned: %+v\n\n", m)
 	}
 
 	for _, p := range []struct {
@@ -73,20 +84,26 @@ func (c *Command) Run() error {
 
 func (c *Command) model() (points.Model, error) {
 	m := points.DefaultModel()
-	if c.Spread > 0 {
-		m.Spread = c.Spread
-	}
-	if c.PriorGames > 0 {
-		m.PriorGames = c.PriorGames
-	}
-	if c.PriorSpreadGames > 0 {
-		m.PriorSpreadGames = c.PriorSpreadGames
+	for _, f := range []struct {
+		flag  *float64
+		value *float64
+	}{
+		{c.Spread, &m.Spread},
+		{c.LeagueGames, &m.LeagueGames},
+		{c.MachineGames, &m.MachineGames},
+		{c.Unplayed, &m.Unplayed},
+		{c.Picked, &m.Picked},
+		{c.Home, &m.Home},
+	} {
+		if f.flag != nil {
+			*f.value = *f.flag
+		}
 	}
 	if len(c.IPROffsets) > 0 {
-		if len(c.IPROffsets) != 6 {
-			return m, fmt.Errorf("want 6 IPR offsets, got %d", len(c.IPROffsets))
+		if len(c.IPROffsets) != len(m.IPROffset) {
+			return m, fmt.Errorf("want %d IPR offsets, got %d", len(m.IPROffset), len(c.IPROffsets))
 		}
-		copy(m.IPROffset[1:], c.IPROffsets)
+		copy(m.IPROffset[:], c.IPROffsets)
 	}
 	return m, nil
 }

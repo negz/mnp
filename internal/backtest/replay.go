@@ -1,9 +1,39 @@
 // Package backtest replays the league's history to measure how well the points
-// model predicts games.
+// model predicts games, and to tune it.
+//
+// Replay walks every match in the archive in date order. For each game it
+// rebuilds what the live response model would have known before that night,
+// using only earlier nights, so predictions are never informed by the games
+// they predict.
+//
+// The headline measure is log loss on head-to-heads: for each game, the
+// predicted probability that each player beats each player on the other team,
+// scored against who did. A singles game is one head-to-head and a doubles
+// game four. Lower is better, and predicting a coin flip every time scores
+// ln 2, about 0.693. Evaluate also reports Brier score, bias, and the error in
+// the picking team's expected points, overall and in slices. The favourite
+// slices show calibration. Seen from the favourite's side, a bias near zero in
+// each slice means the predicted probabilities can be taken at face value.
+//
+// Seasons 14 and 15 are only history, because too few players have earlier
+// games for predictions there to mean much. [points.DefaultModel] was tuned on
+// seasons 16 to 22 with Tune, which searches one parameter at a time to
+// minimise log loss. Seasons 23 and 24 were held out from all of that, and
+// scored once at the end:
+//
+//	Everyone even                   0.693
+//	Model before tuning             0.659
+//	IPR only, with tuned offsets    0.633
+//	points.DefaultModel             0.618
+//
+// To check a change to the model, run `mnp backtest` for seasons 16 to 22 and
+// compare log loss and calibration. Only use seasons 23 and 24, with
+// `--from 23 --to 24`, for a final check, or they stop being held out.
 package backtest
 
 import (
 	"cmp"
+	"math"
 	"slices"
 
 	"github.com/negz/mnp/internal/mnp"
@@ -15,7 +45,7 @@ import (
 // before the night it was played.
 type Player struct {
 	Name   string
-	Stats  points.Stats
+	Known  points.Player
 	Score  float64 // What they scored.
 	Points float64 // Points they won, including any share of a team bonus.
 }
@@ -35,10 +65,12 @@ type Game struct {
 }
 
 // Replay replays every match in date order. For each game it returns what was
-// known beforehand: each player's IPR from that night's lineup, their recency
-// weighted P50 and P90 on the machine from earlier nights, and the league's
-// P50 on the machine from earlier nights by players on that season's rosters.
-// That's what the live response model would have known.
+// known beforehand, as the live response model would have known it: each
+// player's IPR from that night's lineup, whether they're home and whether
+// their team picked the machine, their recency weighted P50 on the machine, and
+// how they score relative to the league across machines. Everything comes from
+// earlier nights. The league's P50 on a machine counts players on that
+// season's rosters.
 //
 // Games missing a player, or where a player scored 1 or less (a forfeit or
 // disqualification), are skipped, and their scores aren't used as evidence.
@@ -65,12 +97,7 @@ func Replay(seasons []mnp.SeasonData, halfLife float64) []Game {
 		return cmp.Or(cmp.Compare(a.Date, b.Date), cmp.Compare(a.Key, b.Key))
 	})
 
-	h := &history{
-		halfLife:  halfLife,
-		byPlayer:  make(map[string]map[string][]recency.Game),
-		byMachine: make(map[string][]scored),
-		league:    make(map[leagueKey]float64),
-	}
+	h := newHistory(halfLife)
 	var games []Game
 	for len(matches) > 0 {
 		n := 1
@@ -134,6 +161,17 @@ type history struct {
 	league map[leagueKey]float64
 }
 
+// newHistory returns an empty history, weighting scores with the given
+// half-life in seasons.
+func newHistory(halfLife float64) *history {
+	return &history{
+		halfLife:  halfLife,
+		byPlayer:  make(map[string]map[string][]recency.Game),
+		byMachine: make(map[string][]scored),
+		league:    make(map[leagueKey]float64),
+	}
+}
+
 // Add adds a match's scores to the history.
 func (h *history) Add(season int, m mnp.MatchData) {
 	clear(h.league)
@@ -165,8 +203,11 @@ func (h *history) Game(season int, rostered map[string]bool, m mnp.MatchData, g 
 		League:  h.League(g.MachineKey, season, rostered),
 	}
 	for _, r := range g.Results {
-		p := h.Player(r, g.MachineKey, season)
-		if r.Position%2 == 1 {
+		picked := r.Position%2 == 1
+		p := h.Player(r, g.MachineKey, season, rostered)
+		p.Known.Picked = picked
+		p.Known.Home = r.IsHome
+		if picked {
 			out.Picker = append(out.Picker, p)
 		} else {
 			out.Responder = append(out.Responder, p)
@@ -175,17 +216,33 @@ func (h *history) Game(season int, rostered map[string]bool, m mnp.MatchData, g 
 	return out
 }
 
-// Player returns a player's result, with their stats on the machine as of the
+// Player returns a player's result, with what was known about them as of the
 // given season.
-func (h *history) Player(r mnp.ResultData, machine string, season int) Player {
+func (h *history) Player(r mnp.ResultData, machine string, season int, rostered map[string]bool) Player {
 	games := h.byPlayer[r.PlayerName][machine]
+
+	// How the player scores relative to the league's typical score now,
+	// on every machine they've played that the league has a typical score
+	// for.
+	var relative []recency.Game
+	for m, gs := range h.byPlayer[r.PlayerName] {
+		league := h.League(m, season, rostered)
+		if league <= 0 {
+			continue
+		}
+		for _, g := range gs {
+			relative = append(relative, recency.Game{Season: g.Season, Score: math.Log(g.Score / league)})
+		}
+	}
+
 	return Player{
 		Name: r.PlayerName,
-		Stats: points.Stats{
-			IPR:   r.IPR,
-			Games: len(games),
-			P50:   recency.Percentile(games, season, h.halfLife, 0.5),
-			P90:   recency.Percentile(games, season, h.halfLife, 0.9),
+		Known: points.Player{
+			IPR:         r.IPR,
+			Games:       len(games),
+			P50:         recency.Percentile(games, season, h.halfLife, 0.5),
+			LeagueGames: len(relative),
+			Relative:    recency.Percentile(relative, season, h.halfLife, 0.5),
 		},
 		Score:  float64(r.Score),
 		Points: r.Points,

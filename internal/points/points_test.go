@@ -85,35 +85,55 @@ func TestDoubles(t *testing.T) {
 
 func TestScore(t *testing.T) {
 	m := Model{
-		IPROffset:        [7]float64{0, -0.27, -0.02, 0.14, 0.28, 0.54, 0.96},
-		Spread:           0.85,
-		PriorGames:       2,
-		PriorSpreadGames: 5,
+		IPROffset:    [7]float64{-0.5, -0.4, 0, 0.2, 0.3, 0.6, 0.9},
+		Spread:       0.9,
+		LeagueGames:  20,
+		MachineGames: 40,
+		Unplayed:     0.1,
+		Picked:       0.05,
+		Home:         0.08,
 	}
 
 	cases := map[string]struct {
 		reason string
-		s      Stats
+		p      Player
 		league float64
 		want   Score
 	}{
 		"Unplayed": {
-			reason: "A player who hasn't played a machine should be expected to play like others with their IPR.",
-			s:      Stats{IPR: 5},
+			reason: "A player who hasn't played the machine or the league should be expected to play like others with their IPR, less a bit for not knowing the machine.",
+			p:      Player{IPR: 5},
 			league: 100,
-			want:   Score{Mu: math.Log(100) + 0.54, Sigma: 0.85},
+			want:   Score{Mu: math.Log(100) + 0.6 - 0.1, Sigma: 0.9},
 		},
-		"ManyGames": {
-			reason: "A player with many games should be expected to score close to their typical score.",
-			s:      Stats{IPR: 1, Games: 98, P50: 1000, P90: 1000 * math.Exp(0.85*z90)},
+		"LeagueGames": {
+			reason: "A player's league games should move their estimate toward how they score relative to the league.",
+			p:      Player{IPR: 1, LeagueGames: 20, Relative: 0.5},
 			league: 100,
-			want:   Score{Mu: (98*math.Log(1000) + 2*(math.Log(100)-0.27)) / 100, Sigma: 0.85},
+			want:   Score{Mu: math.Log(100) + (20*0.5+20*-0.4)/40 - 0.1, Sigma: 0.9},
+		},
+		"MachineGames": {
+			reason: "A player's games on the machine should move their estimate toward their typical score on it.",
+			p:      Player{IPR: 1, Games: 40, P50: 1000},
+			league: 100,
+			want:   Score{Mu: (40*math.Log(1000) + 40*(math.Log(100)-0.4)) / 80, Sigma: 0.9},
+		},
+		"HomePicked": {
+			reason: "A player at home on a machine their team picked should be expected to score higher.",
+			p:      Player{IPR: 1, Home: true, Picked: true},
+			league: 100,
+			want:   Score{Mu: math.Log(100) - 0.4 - 0.1 + 0.05 + 0.08, Sigma: 0.9},
+		},
+		"NoLeague": {
+			reason: "Without a typical score for the league, a player's own typical score should be used as is.",
+			p:      Player{IPR: 1, Games: 3, P50: 1000},
+			want:   Score{Mu: math.Log(1000), Sigma: 0.9},
 		},
 	}
 
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			got := m.Score(tc.s, tc.league)
+			got := m.Score(tc.p, tc.league)
 			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
 				t.Errorf("\n%s\nScore(...): -want, +got:\n%s", tc.reason, diff)
 			}

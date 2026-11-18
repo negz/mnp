@@ -3,9 +3,11 @@ package db
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 // testFixture holds IDs from fixture setup for use in test assertions.
@@ -573,6 +575,59 @@ func TestGetSinglePlayerMachineStats(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want.stats, got); diff != "" {
 				t.Errorf("\n%s\nGetSinglePlayerMachineStats(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestGetRelativeScore(t *testing.T) {
+	type args struct {
+		playerName string
+		league     map[string]float64
+	}
+
+	// Alice scored 500 on TAF, 100 on TZ, and 600 on MM, plus a forfeit on
+	// TZ added below.
+	cases := map[string]struct {
+		reason string
+		args   args
+		want   RelativeScore
+	}{
+		"TwiceTheLeague": {
+			reason: "Should return the median log ratio to the league's typical score, skipping machines without one and forfeits.",
+			args:   args{playerName: "Alice", league: map[string]float64{"TAF": 250, "TZ": 50}},
+			want:   RelativeScore{Games: 2, P50: math.Log(2)},
+		},
+		"NoGames": {
+			reason: "A player who hasn't played shouldn't have a relative score.",
+			args:   args{playerName: "Nobody", league: map[string]float64{"TAF": 250}},
+			want:   RelativeScore{},
+		},
+	}
+
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	alice, err := s.UpsertPlayer(ctx, "Alice")
+	if err != nil {
+		t.Fatalf("UpsertPlayer: %v", err)
+	}
+	game, err := s.InsertGame(ctx, Game{MatchID: f.matchID, Round: 3, MachineKey: "TZ"})
+	if err != nil {
+		t.Fatalf("InsertGame: %v", err)
+	}
+	if err := s.InsertGameResult(ctx, GameResult{GameID: game, PlayerID: alice, TeamID: f.tttID, Position: 2, Score: 1}); err != nil {
+		t.Fatalf("InsertGameResult: %v", err)
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			got, err := s.GetRelativeScore(ctx, tc.args.playerName, tc.args.league)
+			if err != nil {
+				t.Fatalf("GetRelativeScore: %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
+				t.Errorf("\n%s\nGetRelativeScore(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/negz/mnp/internal/recency"
@@ -323,6 +324,62 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 		return cmp.Or(cmp.Compare(b.Games, a.Games), cmp.Compare(a.MachineKey, b.MachineKey))
 	})
 	return stats, nil
+}
+
+// RelativeScore is how a player typically scores relative to the league.
+type RelativeScore struct {
+	Games int     // Games on machines the league has a typical score for.
+	P50   float64 // Median log ratio of their score to the league's typical score.
+}
+
+// GetRelativeScore returns how a player typically scores relative to the
+// league's typical score on each machine, given those typical scores. Recent
+// seasons count for more. Scores of 1 or less, which record a forfeit or
+// disqualification, don't count.
+func (s *SQLiteStore) GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (RelativeScore, error) {
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return RelativeScore{}, fmt.Errorf("get latest season: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.machine_key, s.number, gr.score
+		FROM game_results gr
+		JOIN players p ON p.id = gr.player_id
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE p.name = ?
+		  AND g.machine_key IS NOT NULL
+		  AND gr.score > 1
+	`, playerName)
+	if err != nil {
+		return RelativeScore{}, fmt.Errorf("query relative score: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var games []recency.Game
+	for rows.Next() {
+		var machine string
+		var g recency.Game
+		if err := rows.Scan(&machine, &g.Season, &g.Score); err != nil {
+			return RelativeScore{}, fmt.Errorf("scan relative score: %w", err)
+		}
+		if league[machine] <= 0 {
+			continue
+		}
+		g.Score = math.Log(g.Score / league[machine])
+		games = append(games, g)
+	}
+
+	if err := rows.Err(); err != nil {
+		return RelativeScore{}, fmt.Errorf("iterate relative score: %w", err)
+	}
+
+	return RelativeScore{
+		Games: len(games),
+		P50:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5),
+	}, nil
 }
 
 // GetPlayer returns a player's summary info (latest season).

@@ -1,18 +1,27 @@
 package backtest
 
 import (
+	"math"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/negz/mnp/internal/mnp"
 	"github.com/negz/mnp/internal/points"
 )
 
 func TestReplay(t *testing.T) {
-	singles := func(machine string, picker, responder mnp.ResultData) mnp.GameData {
+	// The home team picks rounds 2 and 4, and the away team 1 and 3. The
+	// picking team plays as players 1 and 3.
+	singlesIn := func(round int, machine string, picker, responder mnp.ResultData) mnp.GameData {
 		picker.Position, responder.Position = 1, 2
-		return mnp.GameData{Round: 2, MachineKey: machine, Results: []mnp.ResultData{picker, responder}}
+		picker.IsHome = round%2 == 0
+		responder.IsHome = !picker.IsHome
+		return mnp.GameData{Round: round, MachineKey: machine, Results: []mnp.ResultData{picker, responder}}
+	}
+	singles := func(machine string, picker, responder mnp.ResultData) mnp.GameData {
+		return singlesIn(2, machine, picker, responder)
 	}
 	teams := []mnp.TeamData{{Key: "AAA", Roster: []string{"Alice", "Bob"}}}
 
@@ -38,13 +47,42 @@ func TestReplay(t *testing.T) {
 			want: []Game{
 				{
 					Season: 24, Date: "2026-09-08", Match: "m1", Round: 2, Machine: "TZ",
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3}, Score: 100, Points: 0}},
-					Responder: []Player{{Name: "Bob", Stats: points.Stats{IPR: 4}, Score: 400, Points: 3}},
+					Picker:    []Player{{Name: "Alice", Known: points.Player{IPR: 3, Home: true, Picked: true}, Score: 100, Points: 0}},
+					Responder: []Player{{Name: "Bob", Known: points.Player{IPR: 4}, Score: 400, Points: 3}},
 				},
 				{
 					Season: 24, Date: "2026-09-15", Match: "m2", Round: 2, Machine: "TZ", League: 100,
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3, Games: 1, P50: 100, P90: 100}, Score: 300, Points: 2}},
-					Responder: []Player{{Name: "Bob", Stats: points.Stats{IPR: 4, Games: 1, P50: 400, P90: 400}, Score: 200, Points: 1}},
+					Picker: []Player{{
+						Name:   "Alice",
+						Known:  points.Player{IPR: 3, Home: true, Picked: true, Games: 1, P50: 100, LeagueGames: 1, Relative: 0},
+						Score:  300,
+						Points: 2,
+					}},
+					Responder: []Player{{
+						Name:   "Bob",
+						Known:  points.Player{IPR: 4, Games: 1, P50: 400, LeagueGames: 1, Relative: math.Log(4)},
+						Score:  200,
+						Points: 1,
+					}},
+				},
+			},
+		},
+		"AwayPicks": {
+			reason: "The away team's players should be the picking team's in rounds 1 and 3, and the home team's the responders.",
+			seasons: []mnp.SeasonData{{
+				Number: 24,
+				Teams:  teams,
+				Matches: []mnp.MatchData{
+					{Key: "m1", Date: "2026-09-08", Games: []mnp.GameData{
+						singlesIn(3, "TZ", mnp.ResultData{PlayerName: "Alice", IPR: 3, Score: 100}, mnp.ResultData{PlayerName: "Bob", IPR: 4, Score: 400}),
+					}},
+				},
+			}},
+			want: []Game{
+				{
+					Season: 24, Date: "2026-09-08", Match: "m1", Round: 3, Machine: "TZ",
+					Picker:    []Player{{Name: "Alice", Known: points.Player{IPR: 3, Picked: true}, Score: 100}},
+					Responder: []Player{{Name: "Bob", Known: points.Player{IPR: 4, Home: true}, Score: 400}},
 				},
 			},
 		},
@@ -65,13 +103,13 @@ func TestReplay(t *testing.T) {
 			want: []Game{
 				{
 					Season: 24, Date: "2026-09-08", Match: "m1", Round: 2, Machine: "TZ",
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3}, Score: 100}},
-					Responder: []Player{{Name: "Bob", Stats: points.Stats{IPR: 4}, Score: 400}},
+					Picker:    []Player{{Name: "Alice", Known: points.Player{IPR: 3, Home: true, Picked: true}, Score: 100}},
+					Responder: []Player{{Name: "Bob", Known: points.Player{IPR: 4}, Score: 400}},
 				},
 				{
 					Season: 24, Date: "2026-09-08", Match: "m2", Round: 2, Machine: "TZ",
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3}, Score: 300}},
-					Responder: []Player{{Name: "Bob", Stats: points.Stats{IPR: 4}, Score: 200}},
+					Picker:    []Player{{Name: "Alice", Known: points.Player{IPR: 3, Home: true, Picked: true}, Score: 300}},
+					Responder: []Player{{Name: "Bob", Known: points.Player{IPR: 4}, Score: 200}},
 				},
 			},
 		},
@@ -94,18 +132,34 @@ func TestReplay(t *testing.T) {
 			want: []Game{
 				{
 					Season: 24, Date: "2026-09-08", Match: "m1", Round: 2, Machine: "TZ",
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3}, Score: 100}},
-					Responder: []Player{{Name: "Carol", Stats: points.Stats{IPR: 1}, Score: 50}},
+					Picker:    []Player{{Name: "Alice", Known: points.Player{IPR: 3, Home: true, Picked: true}, Score: 100}},
+					Responder: []Player{{Name: "Carol", Known: points.Player{IPR: 1}, Score: 50}},
 				},
 				{
 					Season: 24, Date: "2026-09-15", Match: "m2", Round: 2, Machine: "TZ", League: 100,
-					Picker:    []Player{{Name: "Bob", Stats: points.Stats{IPR: 4}, Score: 300}},
-					Responder: []Player{{Name: "Carol", Stats: points.Stats{IPR: 1, Games: 1, P50: 50, P90: 50}, Score: 200}},
+					Picker: []Player{{
+						Name:  "Bob",
+						Known: points.Player{IPR: 4, Home: true, Picked: true, LeagueGames: 1, Relative: 0},
+						Score: 300,
+					}},
+					Responder: []Player{{
+						Name:  "Carol",
+						Known: points.Player{IPR: 1, Games: 1, P50: 50, LeagueGames: 1, Relative: math.Log(0.5)},
+						Score: 200,
+					}},
 				},
 				{
 					Season: 24, Date: "2026-09-15", Match: "m2", Round: 2, Machine: "MM", League: 500,
-					Picker:    []Player{{Name: "Alice", Stats: points.Stats{IPR: 3}, Score: 300}},
-					Responder: []Player{{Name: "Bob", Stats: points.Stats{IPR: 4, Games: 1, P50: 500, P90: 500}, Score: 200}},
+					Picker: []Player{{
+						Name:  "Alice",
+						Known: points.Player{IPR: 3, Home: true, Picked: true, LeagueGames: 1, Relative: 0},
+						Score: 300,
+					}},
+					Responder: []Player{{
+						Name:  "Bob",
+						Known: points.Player{IPR: 4, Games: 1, P50: 500, LeagueGames: 1, Relative: 0},
+						Score: 200,
+					}},
 				},
 			},
 		},
@@ -114,7 +168,7 @@ func TestReplay(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			got := Replay(tc.seasons, 4)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
+			if diff := cmp.Diff(tc.want, got, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
 				t.Errorf("\n%s\nReplay(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})

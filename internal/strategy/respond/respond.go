@@ -32,6 +32,7 @@ type Store interface {
 	GetLeagueP50(ctx context.Context) (map[string]float64, error)
 	GetMachineNames(ctx context.Context) (map[string]string, error)
 	GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error)
+	GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error)
 }
 
 // A Player is in tonight's lineup, with their stats on one machine.
@@ -111,13 +112,18 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 		Responder: responder.Key,
 	}
 
-	st := &stats{store: s, machines: make(map[string]map[string]db.PlayerMachineStats)}
+	st := &stats{
+		store:    s,
+		league:   league,
+		machines: make(map[string]map[string]db.PlayerMachineStats),
+		relative: make(map[string]db.RelativeScore),
+	}
 	picks := make([]pick, 0, len(round.Games))
 	for _, g := range round.Games {
 		if g.Machine == "" {
 			continue
 		}
-		p, err := newPick(ctx, st, m, g, doubles, league[g.Machine])
+		p, err := newPick(ctx, st, m, g, doubles)
 		if err != nil {
 			return nil, err
 		}
@@ -162,29 +168,47 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 	return r, nil
 }
 
-// stats loads each player's stats on every machine, once per player.
+// stats loads each player's stats, once per player.
 type stats struct {
 	store    Store
+	league   map[string]float64
 	machines map[string]map[string]db.PlayerMachineStats
+	relative map[string]db.RelativeScore
 }
 
-// player returns a player in tonight's lineup, with their stats on a machine.
-func (s *stats) player(ctx context.Context, p live.Player, machine string) (Player, error) {
+// player returns a player in tonight's lineup, with their stats on a machine,
+// and their likely score on it.
+func (s *stats) player(ctx context.Context, p live.Player, machine string, home, picked bool) (Player, points.Score, error) {
 	if s.machines[p.Name] == nil {
 		ms, err := s.store.GetSinglePlayerMachineStats(ctx, p.Name, "")
 		if err != nil {
-			return Player{}, fmt.Errorf("load stats for %s: %w", p.Name, err)
+			return Player{}, points.Score{}, fmt.Errorf("load stats for %s: %w", p.Name, err)
 		}
 		s.machines[p.Name] = make(map[string]db.PlayerMachineStats, len(ms))
 		for _, st := range ms {
 			s.machines[p.Name][st.MachineKey] = st
 		}
+		rel, err := s.store.GetRelativeScore(ctx, p.Name, s.league)
+		if err != nil {
+			return Player{}, points.Score{}, fmt.Errorf("load relative score for %s: %w", p.Name, err)
+		}
+		s.relative[p.Name] = rel
 	}
 	st := s.machines[p.Name][machine]
+	rel := s.relative[p.Name]
+	known := points.Player{
+		IPR:         p.IPR,
+		Home:        home,
+		Picked:      picked,
+		Games:       st.Games,
+		P50:         st.P50Score,
+		LeagueGames: rel.Games,
+		Relative:    rel.P50,
+	}
 	return Player{
 		Name: p.Name, IPR: p.IPR, Sub: p.Sub, Played: p.NumPlayed,
 		Games: st.Games, P50Score: st.P50Score, P90Score: st.P90Score,
-	}, nil
+	}, points.DefaultModel().Score(known, s.league[machine]), nil
 }
 
 // A pick is one of the picking team's picks, with every player in the
@@ -196,8 +220,9 @@ type pick struct {
 	theirs  []points.Score
 }
 
-func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool, league float64) (pick, error) {
+func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool) (pick, error) {
 	p := pick{game: Game{N: g.N, MachineKey: g.Machine}}
+	pickerHome := m.Picker(m.Round) == &m.Home
 
 	keys := []string{g.Player1}
 	if doubles {
@@ -208,20 +233,19 @@ func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles
 		if !ok {
 			continue
 		}
-		t, err := st.player(ctx, lp, g.Machine)
+		t, est, err := st.player(ctx, lp, g.Machine, pickerHome, true)
 		if err != nil {
 			return pick{}, err
 		}
 		p.game.Theirs = append(p.game.Theirs, t)
-		p.theirs = append(p.theirs, estimate(t, league))
+		p.theirs = append(p.theirs, est)
 	}
 
 	for _, lp := range m.Responder(m.Round).Lineup {
-		o, err := st.player(ctx, lp, g.Machine)
+		o, est, err := st.player(ctx, lp, g.Machine, !pickerHome, false)
 		if err != nil {
 			return pick{}, err
 		}
-		est := estimate(o, league)
 		p.options = append(p.options, Option{Player: o, Points: alone(est, p.theirs, doubles)})
 		p.ours = append(p.ours, est)
 	}
@@ -286,12 +310,6 @@ func alone(ours points.Score, theirs []points.Score, doubles bool) float64 {
 		total += points.Beats(ours, t)
 	}
 	return total
-}
-
-// estimate returns a player's likely score on a machine.
-func estimate(p Player, league float64) points.Score {
-	s := points.Stats{IPR: p.IPR, Games: p.Games, P50: p.P50Score, P90: p.P90Score}
-	return points.DefaultModel().Score(s, league)
 }
 
 // averageGames returns the average number of games players have played on a

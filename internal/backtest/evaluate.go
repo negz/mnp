@@ -11,18 +11,18 @@ import (
 
 // A Predictor estimates a player's score on a machine, given what's known
 // about them and the league's typical score on it.
-type Predictor func(s points.Stats, league float64) points.Score
+type Predictor func(p points.Player, league float64) points.Score
 
 // Even predicts every player will score the same.
-func Even(_ points.Stats, _ float64) points.Score {
+func Even(_ points.Player, _ float64) points.Score {
 	return points.Score{Sigma: 1}
 }
 
 // IPROnly predicts players will score like others with their IPR, ignoring
 // their own games on the machine.
 func IPROnly(m points.Model) Predictor {
-	return func(s points.Stats, league float64) points.Score {
-		return m.Score(points.Stats{IPR: s.IPR}, league)
+	return func(p points.Player, league float64) points.Score {
+		return m.Score(points.Player{IPR: p.IPR}, league)
 	}
 }
 
@@ -33,7 +33,7 @@ type Metrics struct {
 	Duels   int
 	LogLoss float64
 	Brier   float64
-	Bias    float64 // How much more often the picking team won than predicted.
+	Bias    float64 // How much more often the picking team, or the favourite, won than predicted.
 
 	// Points the picking team won in each game.
 	Games      int
@@ -113,22 +113,18 @@ func Evaluate(games []Game, predict Predictor) []Slice {
 	for _, b := range experience {
 		tally("games", b.label)
 	}
-	for gap := range 6 {
+	for gap := range 7 {
 		tally("ipr gap", fmt.Sprint(gap))
 	}
-	for p := 0.5; p < 1; p += 0.1 {
-		tally("favourite", confidence(p))
+	for tenths := 5; tenths < 10; tenths++ {
+		tally("favourite", confidence(float64(tenths)/10))
+	}
+	for _, g := range games {
+		tally("season", fmt.Sprint(g.Season))
 	}
 
 	for _, g := range games {
-		picker := make([]points.Score, len(g.Picker))
-		for i, p := range g.Picker {
-			picker[i] = predict(p.Stats, g.League)
-		}
-		responder := make([]points.Score, len(g.Responder))
-		for i, p := range g.Responder {
-			responder[i] = predict(p.Stats, g.League)
-		}
+		picker, responder := scores(g.Picker, g.League, predict), scores(g.Responder, g.League, predict)
 
 		format := "singles"
 		predicted := points.Singles(picker[0], responder[0])
@@ -142,13 +138,13 @@ func Evaluate(games []Game, predict Predictor) []Slice {
 		}
 
 		least := slices.MinFunc(slices.Concat(g.Picker, g.Responder), func(a, b Player) int {
-			return cmp.Compare(a.Stats.Games, b.Stats.Games)
+			return cmp.Compare(a.Known.Games, b.Known.Games)
 		})
 		gameSlices := []*Tally{
 			tally("all", ""),
 			tally("format", format),
 			tally("season", fmt.Sprint(g.Season)),
-			tally("games", bucket(least.Stats.Games)),
+			tally("games", bucket(least.Known.Games)),
 		}
 		for _, t := range gameSlices {
 			t.AddGame(predicted, actual)
@@ -162,8 +158,8 @@ func Evaluate(games []Game, predict Predictor) []Slice {
 					tally("all", ""),
 					tally("format", format),
 					tally("season", fmt.Sprint(g.Season)),
-					tally("games", bucket(min(a.Stats.Games, b.Stats.Games))),
-					tally("ipr gap", fmt.Sprint(abs(a.Stats.IPR-b.Stats.IPR))),
+					tally("games", bucket(min(a.Known.Games, b.Known.Games))),
+					tally("ipr gap", fmt.Sprint(abs(a.Known.IPR-b.Known.IPR))),
 				}
 				for _, t := range duelSlices {
 					t.AddDuel(p, won)
@@ -196,6 +192,15 @@ var experience = []struct { //nolint:gochecknoglobals // Lookup table.
 	{"1-2", 1},
 	{"3-9", 3},
 	{"10+", 10},
+}
+
+// scores returns the predicted score of each player.
+func scores(players []Player, league float64, predict Predictor) []points.Score {
+	out := make([]points.Score, len(players))
+	for i, p := range players {
+		out[i] = predict(p.Known, league)
+	}
+	return out
 }
 
 // confidence buckets the probability that the favourite wins.
