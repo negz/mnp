@@ -27,6 +27,8 @@ type Store interface { //nolint:interfacebloat // Composes four strategy store i
 	ListSchedule(ctx context.Context, after string) ([]db.ScheduleMatch, error)
 	MaxSeasonNumber(ctx context.Context) (int, error)
 	GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error)
+	ListSubs(ctx context.Context, teamKey string) ([]db.PlayerSummary, error)
+	ListIPRs(ctx context.Context) (map[string]int, error)
 }
 
 // An InMemoryStore wraps a Store, caching data that only changes when a sync
@@ -40,14 +42,25 @@ type InMemoryStore struct {
 	venues       []db.Venue
 	machines     []db.Machine
 	players      []db.PlayerSummary
+	iprs         map[string]int
 	leagueP50    map[string]float64
 	machineNames map[string]string
+
+	// Suggestions load every player's stats in both lineups, so stats are
+	// remembered as they're loaded, until the next refresh.
+	playerStats map[string][]db.PlayerMachineStats
+	relative    map[string]db.RelativeScore
+	refreshes   int // How many times the cache has been refreshed.
 }
 
 // NewInMemoryStore returns an InMemoryStore that caches slow-changing data in
 // memory.
 func NewInMemoryStore(s Store) *InMemoryStore {
-	return &InMemoryStore{wrapped: s}
+	return &InMemoryStore{
+		wrapped:     s,
+		playerStats: make(map[string][]db.PlayerMachineStats),
+		relative:    make(map[string]db.RelativeScore),
+	}
 }
 
 // Refresh repopulates the in-memory cache from the underlying store.
@@ -72,6 +85,11 @@ func (s *InMemoryStore) Refresh(ctx context.Context) error {
 		return err
 	}
 
+	iprs, err := s.wrapped.ListIPRs(ctx)
+	if err != nil {
+		return err
+	}
+
 	leagueP50, err := s.wrapped.GetLeagueP50(ctx)
 	if err != nil {
 		return err
@@ -89,8 +107,12 @@ func (s *InMemoryStore) Refresh(ctx context.Context) error {
 	s.venues = venues
 	s.machines = machines
 	s.players = players
+	s.iprs = iprs
 	s.leagueP50 = leagueP50
 	s.machineNames = machineNames
+	s.playerStats = make(map[string][]db.PlayerMachineStats)
+	s.relative = make(map[string]db.RelativeScore)
+	s.refreshes++
 
 	return nil
 }
@@ -187,6 +209,65 @@ func (s *InMemoryStore) GetMachineNames(_ context.Context) (map[string]string, e
 	return s.machineNames, nil
 }
 
+// ListIPRs returns every rated player's IPR from the cache.
+func (s *InMemoryStore) ListIPRs(_ context.Context) (map[string]int, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.iprs, nil
+}
+
+// GetSinglePlayerMachineStats returns a player's stats on every machine from
+// the cache, loading them from the underlying store if they aren't cached.
+// Stats for a single venue aren't cached.
+func (s *InMemoryStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error) {
+	if venueKey != "" {
+		return s.wrapped.GetSinglePlayerMachineStats(ctx, playerName, venueKey)
+	}
+	s.mu.RLock()
+	stats, ok := s.playerStats[playerName]
+	refreshes := s.refreshes
+	s.mu.RUnlock()
+	if ok {
+		return stats, nil
+	}
+	stats, err := s.wrapped.GetSinglePlayerMachineStats(ctx, playerName, venueKey)
+	if err != nil {
+		return nil, err
+	}
+	// Stats loaded before a refresh are stale after it. Names nobody's
+	// played under, e.g. typos, aren't worth remembering.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshes == refreshes && len(stats) > 0 {
+		s.playerStats[playerName] = stats
+	}
+	return stats, nil
+}
+
+// GetRelativeScore returns how a player scores relative to the league from the
+// cache, loading it from the underlying store if it isn't cached. It assumes
+// league is the league's typical scores from this store, as GetLeagueP50
+// returns them.
+func (s *InMemoryStore) GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error) {
+	s.mu.RLock()
+	rel, ok := s.relative[playerName]
+	refreshes := s.refreshes
+	s.mu.RUnlock()
+	if ok {
+		return rel, nil
+	}
+	rel, err := s.wrapped.GetRelativeScore(ctx, playerName, league)
+	if err != nil {
+		return db.RelativeScore{}, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.refreshes == refreshes && rel.Games > 0 {
+		s.relative[playerName] = rel
+	}
+	return rel, nil
+}
+
 // Passthrough methods.
 
 // MaxSeasonNumber passes through to the underlying store.
@@ -224,12 +305,7 @@ func (s *InMemoryStore) GetPlayer(ctx context.Context, playerName string) (db.Pl
 	return s.wrapped.GetPlayer(ctx, playerName)
 }
 
-// GetSinglePlayerMachineStats passes through to the underlying store.
-func (s *InMemoryStore) GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error) {
-	return s.wrapped.GetSinglePlayerMachineStats(ctx, playerName, venueKey)
-}
-
-// GetRelativeScore passes through to the underlying store.
-func (s *InMemoryStore) GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error) {
-	return s.wrapped.GetRelativeScore(ctx, playerName, league)
+// ListSubs passes through to the underlying store.
+func (s *InMemoryStore) ListSubs(ctx context.Context, teamKey string) ([]db.PlayerSummary, error) {
+	return s.wrapped.ListSubs(ctx, teamKey)
 }

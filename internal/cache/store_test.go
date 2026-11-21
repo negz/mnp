@@ -253,3 +253,90 @@ func TestListPlayersFilter(t *testing.T) {
 		})
 	}
 }
+
+// statsStore is a Store with stats for one player, that counts how often
+// they're loaded. If during is set, it's called while they're loading.
+type statsStore struct {
+	Store
+
+	loads  int
+	during func()
+}
+
+func (s *statsStore) GetSinglePlayerMachineStats(_ context.Context, name, _ string) ([]db.PlayerMachineStats, error) {
+	s.loads++
+	if s.during != nil {
+		s.during()
+	}
+	if name != "Nic Cope" {
+		return nil, nil
+	}
+	return []db.PlayerMachineStats{{MachineKey: "VEN", Games: 23}}, nil
+}
+
+func (s *statsStore) ListTeams(_ context.Context, _ string) ([]db.TeamSummary, error) {
+	return nil, nil
+}
+
+func (s *statsStore) ListVenues(_ context.Context, _ string) ([]db.Venue, error) { return nil, nil }
+
+func (s *statsStore) ListMachines(_ context.Context, _ string) ([]db.Machine, error) { return nil, nil }
+
+func (s *statsStore) ListPlayers(_ context.Context, _ string) ([]db.PlayerSummary, error) {
+	return nil, nil
+}
+
+func (s *statsStore) ListIPRs(_ context.Context) (map[string]int, error) { return nil, nil }
+
+func (s *statsStore) GetLeagueP50(_ context.Context) (map[string]float64, error) { return nil, nil }
+
+func (s *statsStore) GetMachineNames(_ context.Context) (map[string]string, error) { return nil, nil }
+
+func TestGetSinglePlayerMachineStatsCache(t *testing.T) {
+	cases := map[string]struct {
+		reason    string
+		name      string
+		refresh   bool // Refresh while the first load is under way.
+		wantLoads int
+	}{
+		"Remembered": {
+			reason:    "A player's stats should be loaded once, then remembered.",
+			name:      "Nic Cope",
+			wantLoads: 1,
+		},
+		"NoStats": {
+			reason:    "A name nobody's played under shouldn't be remembered.",
+			name:      "Nobody",
+			wantLoads: 2,
+		},
+		"Refreshed": {
+			reason:    "Stats loaded while the cache refreshes may be stale, so shouldn't be remembered.",
+			name:      "Nic Cope",
+			refresh:   true,
+			wantLoads: 2,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			wrapped := &statsStore{}
+			s := NewInMemoryStore(wrapped)
+			if tc.refresh {
+				wrapped.during = func() {
+					wrapped.during = nil
+					if err := s.Refresh(ctx); err != nil {
+						t.Fatalf("Refresh: %v", err)
+					}
+				}
+			}
+			for range 2 {
+				if _, err := s.GetSinglePlayerMachineStats(ctx, tc.name, ""); err != nil {
+					t.Fatalf("GetSinglePlayerMachineStats: %v", err)
+				}
+			}
+			if wrapped.loads != tc.wantLoads {
+				t.Errorf("\n%s\nGetSinglePlayerMachineStats(...) twice: want %d loads, got %d", tc.reason, tc.wantLoads, wrapped.loads)
+			}
+		})
+	}
+}
