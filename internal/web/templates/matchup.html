@@ -53,9 +53,9 @@
   <p>{{.VenueName}}</p>
 </hgroup>
 
-{{if isLive .Live}}<p class="live-link"><strong>Live</strong> · {{.Live.Status}} · <a href="/live?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">{{if .Live.Responding}}Suggestions{{else}}Follow along{{end}} →</a></p>{{end}}
+{{if isLive .Live}}<p class="live-link"><strong>Live</strong> · {{.Live.Status}} · {{if .Live.Picking}}<a href="/pick?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">Suggest picks →</a>{{else}}<a href="/live?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">{{if .Live.Responding}}Suggestions{{else}}Follow along{{end}} →</a>{{end}}</p>{{end}}
 
-<p class="toggle">Best machines for <strong>{{.Team1}}</strong> · <a href="/matchup?venue={{.Venue}}&t1={{.Team2}}&t2={{.Team1}}">{{.Team2}}</a></p>
+<p class="toggle">Best machines for <strong>{{.Team1}}</strong> · <a href="/matchup?venue={{.Venue}}&t1={{.Team2}}&t2={{.Team1}}">{{.Team2}}</a> · <a href="/pick?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">Suggest {{.Team1}}'s picks →</a></p>
 
 <section>
   {{range .Result.Machines}}

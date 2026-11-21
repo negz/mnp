@@ -1,0 +1,155 @@
+{{define "title"}}MNP - Picks {{.Team1}} vs {{.Team2}}{{end}}
+
+{{define "pick-stats"}}
+<ul>
+  {{range .}}
+  <li><a href="/p/{{pathEscape .Name}}">{{.Name}}</a><br><small>{{if .IPR}}IPR {{.IPR}} · {{end}}{{if .Games}}{{formatScore .P50Score}} typical · {{formatScore .P90Score}} high · {{.Games}} {{if eq .Games 1}}game{{else}}games{{end}}{{else}}hasn't played it{{end}}{{if .Sub}} · sub{{end}}</small></li>
+  {{else}}
+  <li><small>Nobody. A missing player scores 1.</small></li>
+  {{end}}
+</ul>
+{{end}}
+
+{{define "lineup"}}
+<div id="{{.Fields.Playing}}" class="lineup">
+  <input type="hidden" name="{{.Fields.Playing}}" value="">
+  {{range .Players}}
+  <div class="lineup-player">
+    <label>
+      <input type="checkbox" name="{{$.Fields.Playing}}" value="{{.Name}}"{{if .Playing}} checked{{end}}>
+      <span>{{.Name}} <small class="muted">{{if .IPR}}IPR {{.IPR}}{{else}}IPR 1 · new{{end}}{{if .Sub}} · sub{{end}}</small></span>
+    </label>
+    <label class="must">
+      <input type="checkbox" role="switch" name="{{$.Fields.Must}}" value="{{.Name}}"{{if .Must}} checked{{end}}{{if not .Playing}} disabled{{end}}>
+      <span class="muted"><small>Must play</small></span>
+    </label>
+  </div>
+  {{end}}
+  {{with .Subs}}
+  <p class="subs"><small class="muted">Add a sub:</small>
+    {{range .}}<button type="button" value="{{.Name}}" class="outline secondary" onclick="const i = this.closest('.lineup').querySelector('input[type=text]'); i.value = this.value; i.dispatchEvent(new Event('change', {bubbles: true}))">{{.Name}}{{if .IPR}} <small>· IPR {{.IPR}}</small>{{end}}</button> {{end}}
+  </p>
+  {{end}}
+  <input type="text" name="{{.Fields.Add}}" list="sub-names" autocomplete="off" onkeydown="if (event.key === 'Enter') { event.preventDefault(); this.dispatchEvent(new Event('change', {bubbles: true})) }" oninput="if ([...document.getElementById('sub-names').options].some(o => o.value === this.value)) this.dispatchEvent(new Event('change', {bubbles: true}))" placeholder="Or type a sub's name" aria-label="Add a sub to {{.Team}}">
+</div>
+{{end}}
+
+{{define "content"}}
+<hgroup class="title">
+  <h2><span>{{.Team1Name}}</span> <span><small>vs</small> {{.Team2Name}}</span></h2>
+  <p>{{.VenueName}}{{if .Venue}} · <a href="/matchup?venue={{.Venue}}&t1={{.Team1}}&t2={{.Team2}}">Matchup</a>{{end}}</p>
+</hgroup>
+
+{{if .Rounds}}
+<form id="pick-form" class="pick-layout" action="/pick" method="get"
+      hx-get="/pick" hx-trigger="change, submit" hx-sync="this:replace"
+      hx-target="#picks" hx-select="#picks" hx-swap="outerHTML" hx-select-oob="#t1p,#t2p"
+      hx-push-url="true" hx-indicator="#picks">
+  <input type="hidden" name="venue" value="{{.Venue}}">
+  <input type="hidden" name="t1" value="{{.Team1}}">
+  <input type="hidden" name="t2" value="{{.Team2}}">
+  <input type="hidden" name="round" value="{{.Round}}">
+
+  <section id="picks">
+    <input type="hidden" name="edit" value="">
+
+    <nav class="rounds">
+      <ul>
+        {{range .Rounds}}
+        <li><a href="{{.URL}}"{{if eq .N $.Round}} aria-current="page"{{end}}>Round {{.N}} <small>{{if .Doubles}}doubles{{else}}singles{{end}}</small></a></li>
+        {{end}}
+      </ul>
+    </nav>
+
+    {{if isLive .Live}}<p class="live-round"><strong>Live</strong> · {{.Live.Status}}</p>{{end}}
+
+    {{with .Result}}
+    <p class="live-round"><strong>Pick these</strong><br><small class="muted">If {{$.Team2}} sends its best players against them, {{$.Team1}} can expect about {{formatPoints .Points}} of {{.MaxPoints}} points. Tap a game to change it, and the other picks will fit around it.</small></p>
+    {{range $i, $g := .Games}}
+    <details class="row">
+      <summary>
+        <span class="row-title">{{.MachineName}}</span>
+        <span class="row-value">{{formatPercent .Win}} <small class="muted">to win</small></span>
+        <small class="row-sub">{{if .Pinned}}<mark>Pinned</mark> {{end}}<strong>{{playerNames .Ours}}</strong> vs {{playerNames .Theirs}}</small>
+      </summary>
+      <div class="pin-editor">
+        <select name="g{{$i}}m" aria-label="Machine" onchange="document.getElementById('pin-{{$i}}').checked = true; this.form.edit.value = '{{$i}}'">
+          {{range $.Machines}}{{if .Checked}}<option value="{{.Key}}"{{if eq .Key $g.MachineKey}} selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+        </select>
+        {{range $p := $g.Ours}}
+        <select name="g{{$i}}p" aria-label="{{$.Team1}} player" onchange="document.getElementById('pin-{{$i}}').checked = true; this.form.edit.value = '{{$i}}'">
+          {{range $.Ours.Players}}{{if .Playing}}<option value="{{.Name}}"{{if eq .Name $p.Name}} selected{{end}}>{{.Name}}</option>{{end}}{{end}}
+        </select>
+        {{end}}
+        <label><input type="checkbox" role="switch" id="pin-{{$i}}" name="pin" value="{{$i}}"{{if .Pinned}} checked{{end}}> <span>Pinned</span></label>
+      </div>
+      <div class="grid">
+        <div>
+          <p><strong>{{$.Team1}}</strong> <small class="muted">· pick</small></p>
+          {{template "pick-stats" .Ours}}
+        </div>
+        <div>
+          <p><strong>{{$.Team2}}</strong> <small class="muted">· likely to send</small></p>
+          {{template "pick-stats" .Theirs}}
+        </div>
+      </div>
+    </details>
+    {{end}}
+    <p class="pick-rest"><small class="muted">
+      {{with .SittingOut}}Sitting out: {{range $i, $p := .}}{{if $i}}, {{end}}{{$p.Name}}{{end}}.{{end}}
+      {{with .Unpicked}}Not picked: {{join . ", "}}.{{end}}
+    </small></p>
+    {{end}}
+
+    {{if not .Result}}{{range $i, $p := .Pinned}}
+    <input type="hidden" name="pin" value="{{$i}}"><input type="hidden" name="g{{$i}}m" value="{{$p.Machine}}">{{range $p.Players}}<input type="hidden" name="g{{$i}}p" value="{{.}}">{{end}}
+    {{end}}{{end}}
+    {{range .Unpinned}}<p><small>{{.}}</small></p>{{end}}
+    {{with .Error}}<p>{{.}}</p>{{end}}
+  </section>
+
+  <div class="choices">
+    <details class="choices">
+      <summary>Machines</summary>
+      <input type="hidden" name="m" value="">
+      <div class="machines">
+        {{range .Machines}}
+        <label><input type="checkbox" name="m" value="{{.Key}}"{{if .Checked}} checked{{end}}> {{.Name}}</label>
+        {{end}}
+      </div>
+    </details>
+
+    <details class="choices">
+      <summary>{{.Team1}} players</summary>
+      {{template "lineup" .Ours}}
+    </details>
+
+    <details class="choices">
+      <summary>{{.Team2}} players</summary>
+      {{template "lineup" .Theirs}}
+    </details>
+
+    <noscript><button type="submit">Update picks</button></noscript>
+    <datalist id="sub-names">{{range .SubNames}}<option value="{{.}}">{{end}}</datalist>
+  </div>
+</form>
+
+<details class="legend">
+  <summary>How to read this</summary>
+  <dl>
+    <dt>Pick these</dt><dd>The machines, and who should play them, that win {{.Team1}} the most points if {{.Team2}} sends its best players against each. It's what mnp.tips would suggest {{.Team2}} send.</dd>
+    <dt>Likely to send</dt><dd>{{.Team2}}'s best response to all of the picks at once, using each of its players once.</dd>
+    <dt>Pinned</dt><dd>A game you've changed. It stays as you set it, and the other picks fit around it. Turn it off to let the suggestions change it again.</dd>
+    <dt>To win</dt><dd>The chance {{.Team1}}'s players win the game. In doubles that means taking 3 or more of its 5 points.</dd>
+    <dt>Machines</dt><dd>Untick any that are out of order tonight, or that you don't want to pick.</dd>
+    <dt>Players</dt><dd>Untick anyone who can't play this round, and add subs. Players who must play are always picked, for example because they sat out the last round. During a match this follows the lineups and who's played.</dd>
+    {{template "term-typical"}}
+    {{template "term-high"}}
+    {{template "term-ipr"}}
+  </dl>
+</details>
+{{else}}
+<h2>Picks</h2>
+<p>{{.Error}}</p>
+{{end}}
+{{end}}
