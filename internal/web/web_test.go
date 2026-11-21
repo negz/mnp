@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/strategy/matchup"
+	"github.com/negz/mnp/internal/strategy/pick"
 )
 
 func TestFormatEdge(t *testing.T) {
@@ -190,6 +193,157 @@ func TestFormatPercent(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if diff := cmp.Diff(tc.want, formatPercent(tc.p)); diff != "" {
 				t.Errorf("formatPercent(%v): -want, +got:\n%s", tc.p, diff)
+			}
+		})
+	}
+}
+
+func TestPins(t *testing.T) {
+	round := pick.Round{
+		N:        2,
+		Machines: []string{"VEN", "Jaws", "JW"},
+		Ours:     []pick.Player{{Name: "Nic"}, {Name: "Rick"}, {Name: "Kyle"}},
+	}
+	names := map[string]string{"VEN": "Venom", "Jaws": "Jaws", "JW": "John Wick"}
+
+	cases := map[string]struct {
+		reason       string
+		q            url.Values
+		wantPinned   []pick.Pin
+		wantUnpinned []string
+	}{
+		"OnlyPinned": {
+			reason:     "Only games listed in the pin field should be pinned.",
+			q:          url.Values{"pin": {"1"}, "g0m": {"VEN"}, "g0p": {"Nic"}, "g1m": {"Jaws"}, "g1p": {"Rick"}},
+			wantPinned: []pick.Pin{{Machine: "Jaws", Players: []string{"Rick"}}},
+		},
+		"EditedWins": {
+			reason:       "When two games are pinned to one player, the game edited last should keep them.",
+			q:            url.Values{"pin": {"0", "1"}, "edit": {"1"}, "g0m": {"VEN"}, "g0p": {"Rick"}, "g1m": {"Jaws"}, "g1p": {"Rick"}},
+			wantPinned:   []pick.Pin{{Machine: "Jaws", Players: []string{"Rick"}}},
+			wantUnpinned: []string{"Unpinned Venom, since Rick is already pinned."},
+		},
+		"MachineCantBePicked": {
+			reason:       "A game can't be pinned to a machine that can't be picked.",
+			q:            url.Values{"pin": {"0"}, "g0m": {"TZ"}, "g0p": {"Nic"}},
+			wantUnpinned: []string{"Unpinned TZ, since it can't be picked."},
+		},
+		"PlayerCantPlay": {
+			reason:       "A game can't be pinned to a player who can't play.",
+			q:            url.Values{"pin": {"0"}, "g0m": {"JW"}, "g0p": {"Blake"}},
+			wantUnpinned: []string{"Unpinned John Wick, since Blake can't play."},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			pinned, unpinned := pins(tc.q, round, names)
+			if diff := cmp.Diff(tc.wantPinned, pinned); diff != "" {
+				t.Errorf("\n%s\npins(...): -want pinned, +got:\n%s", tc.reason, diff)
+			}
+			if diff := cmp.Diff(tc.wantUnpinned, unpinned); diff != "" {
+				t.Errorf("\n%s\npins(...): -want unpinned, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestCanonicalName(t *testing.T) {
+	iprs := map[string]int{"Adam Jenkins USA": 2, "Gary Sabo": 1}
+	cases := map[string]struct {
+		reason string
+		name   string
+		want   string
+	}{
+		"Exact":   {reason: "A rated player's name should be unchanged.", name: "Gary Sabo", want: "Gary Sabo"},
+		"Case":    {reason: "A rated player's name should match ignoring case.", name: "adam jenkins usa", want: "Adam Jenkins USA"},
+		"Unrated": {reason: "A name nobody's rated under should be unchanged.", name: "New Person", want: "New Person"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if diff := cmp.Diff(tc.want, canonicalName(tc.name, iprs)); diff != "" {
+				t.Errorf("\n%s\ncanonicalName(%q): -want, +got:\n%s", tc.reason, tc.name, diff)
+			}
+		})
+	}
+}
+
+func TestNextRound(t *testing.T) {
+	home := []int{2, 4}
+	match := func(state live.State, round int) *live.Match {
+		return &live.Match{State: state, Round: round, Home: live.Team{Key: "TTT"}, Away: live.Team{Key: "KNR"}}
+	}
+	cases := map[string]struct {
+		reason string
+		m      *live.Match
+		want   int
+	}{
+		"NoMatch":     {reason: "Without a match the first round the team picks should be next.", want: 2},
+		"NotStarted":  {reason: "Before a match starts the first round the team picks should be next.", m: match(live.StateLineups, 1), want: 2},
+		"PickingNow":  {reason: "A round the team is picking now should be next.", m: match(live.StatePicking, 2), want: 2},
+		"PlayingNow":  {reason: "Once the team's picks are in, the next round it picks should be next.", m: match(live.StatePlaying, 2), want: 4},
+		"OtherPicker": {reason: "While the other team picks, the next round the team picks should be next.", m: match(live.StatePicking, 3), want: 4},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := nextRound(tc.m, "TTT", home); got != tc.want {
+				t.Errorf("\n%s\nnextRound(...): want round %d, got %d", tc.reason, tc.want, got)
+			}
+		})
+	}
+}
+
+func TestPickTemplate(t *testing.T) {
+	lineup := func(field string) lineupChoice {
+		return lineupChoice{
+			Team:    "TTT",
+			Fields:  lineupFields{Playing: field + "p", Must: field + "m", Add: field + "s"},
+			Players: []playerChoice{{Name: "Nic", IPR: 5, Playing: true, Must: true}, {Name: "Rick", IPR: 5}, {Name: "New Person", Sub: true, Playing: true}},
+			Subs:    []playerChoice{{Name: "Gary", IPR: 1, Sub: true}},
+		}
+	}
+	cases := map[string]struct {
+		reason string
+		data   pickData
+		want   []string
+	}{
+		"Result": {
+			reason: "Suggestions should render with a machine and player to change for each game, and a pin for those pinned.",
+			data: pickData{
+				Venue: "STN", Team1: "TTT", Team2: "KNR", Round: 2,
+				Rounds:   []pickRound{{N: 2, URL: "/pick?round=2"}, {N: 4, Doubles: true, URL: "/pick?round=4"}},
+				Machines: []machineChoice{{Key: "VEN", Name: "Venom", Checked: true}},
+				Ours:     lineup("t1"), Theirs: lineup("t2"),
+				SubNames: []string{"Gary"},
+				Result: &pick.Result{Round: 2, MaxPoints: 3, Games: []pick.Game{{
+					MachineKey: "VEN", MachineName: "Venom", MaxPoints: 3, Pinned: true,
+					Ours: []pick.Stats{{Name: "Nic"}}, Theirs: []pick.Stats{{Name: "Lee"}},
+				}}},
+			},
+			want: []string{`name="g0m"`, `<option value="VEN" selected>`, `name="g0p"`, `<option value="Nic" selected>`, `id="pin-0" name="pin" value="0" checked`, "<mark>Pinned</mark>", `<option value="Gary">`, "IPR 1 · new"},
+		},
+		"Error": {
+			reason: "Pins should be kept in the form when there's no result to show them in.",
+			data: pickData{
+				Venue: "STN", Team1: "TTT", Team2: "KNR", Round: 2,
+				Rounds: []pickRound{{N: 2, URL: "/pick?round=2"}},
+				Ours:   lineup("t1"), Theirs: lineup("t2"),
+				Pinned: []pick.Pin{{Machine: "VEN", Players: []string{"Nic"}}},
+				Error:  "Can't suggest picks.",
+			},
+			want: []string{`name="pin" value="0"`, `name="g0m" value="VEN"`, `name="g0p" value="Nic"`},
+		},
+	}
+	tmpl := parseTemplates("templates/pick.html")
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			var b strings.Builder
+			if err := tmpl.ExecuteTemplate(&b, "layout.html", tc.data); err != nil {
+				t.Fatalf("\n%s\nExecuteTemplate(...): %v", tc.reason, err)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(b.String(), w) {
+					t.Errorf("\n%s\nExecuteTemplate(...): want output to contain %s", tc.reason, w)
+				}
 			}
 		})
 	}

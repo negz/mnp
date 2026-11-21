@@ -43,6 +43,7 @@ type serverTemplate struct {
 	player    *template.Template
 	teams     *template.Template
 	live      *template.Template
+	pick      *template.Template
 }
 
 // Server serves the MNP web UI.
@@ -78,6 +79,7 @@ func NewServer(store cache.Store, log *slog.Logger, opts ...ServerOption) *Serve
 			player:    parseTemplates("templates/player.html"),
 			teams:     parseTemplates("templates/teams.html"),
 			live:      parseTemplates("templates/live.html"),
+			pick:      parseTemplates("templates/pick.html"),
 		},
 	}
 	for _, o := range opts {
@@ -109,6 +111,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /matchup", s.handleMatchup)
 
 	mux.HandleFunc("GET /live", s.handleLive)
+
+	mux.HandleFunc("GET /pick", s.handlePick)
 
 	mux.HandleFunc("GET /t/{team}/scout", s.handleScout)
 
@@ -208,7 +212,8 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatP50(p50, leagueP50)
 		},
-		"pathEscape": url.PathEscape,
+		"pathEscape":  url.PathEscape,
+		"playerNames": playerNames,
 	}
 }
 
@@ -518,6 +523,7 @@ type liveData struct {
 	Match      *live.Match
 	Status     string          // Where the match is, e.g. "Round 2 · DRK picking".
 	Responding bool            // Whether team 1 is responding to team 2's picks.
+	Picking    bool            // Whether team 1 is picking.
 	Response   *respond.Result // Suggestions for team 1, if they were asked for.
 }
 
@@ -563,6 +569,7 @@ func (s *Server) liveMatch(ctx context.Context, team1, team2 string, suggest boo
 			Match:      lm,
 			Status:     status(lm),
 			Responding: lm.State == live.StateResponding && lm.Responder(lm.Round).Key == team1,
+			Picking:    lm.State == live.StatePicking && lm.Picker(lm.Round).Key == team1,
 		}
 		if !data.Responding || !suggest {
 			return data

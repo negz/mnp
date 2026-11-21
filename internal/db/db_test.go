@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"testing"
 
@@ -1078,5 +1079,85 @@ func TestListSchedule(t *testing.T) {
 				t.Errorf("\n%s\nListSchedule(...): -want, +got:\n%s", tc.reason, diff)
 			}
 		})
+	}
+}
+
+func TestListSubs(t *testing.T) {
+	s, f := newTestStore(t)
+	ctx := context.Background()
+
+	// Last season, Erin subbed for TTT twice, and Frank and Carol once
+	// each. Carol is on KNR's roster now. Hal was on TTT's roster, so
+	// didn't sub. This season Gus subbed for TTT once, and Erin for KNR.
+	last, err := s.UpsertSeason(ctx, 22)
+	if err != nil {
+		t.Fatalf("UpsertSeason: %v", err)
+	}
+	lastTTT, err := s.UpsertTeam(ctx, Team{Key: "TTT", Name: "The Trailer Trashers", SeasonID: last, HomeVenueID: f.stnID})
+	if err != nil {
+		t.Fatalf("UpsertTeam: %v", err)
+	}
+	ids := make(map[string]int64)
+	for _, name := range []string{"Erin", "Frank", "Gus", "Carol", "Hal"} {
+		if ids[name], err = s.UpsertPlayer(ctx, name); err != nil {
+			t.Fatalf("UpsertPlayer %s: %v", name, err)
+		}
+	}
+	if err := s.UpsertPlayerIPR(ctx, "Erin", 3); err != nil {
+		t.Fatalf("UpsertPlayerIPR: %v", err)
+	}
+	if err := s.UpsertRoster(ctx, ids["Hal"], lastTTT, "P"); err != nil {
+		t.Fatalf("UpsertRoster: %v", err)
+	}
+	for i, sub := range []struct {
+		player string
+		team   int64
+		season int64
+	}{
+		{"Erin", lastTTT, last},
+		{"Erin", lastTTT, last},
+		{"Frank", lastTTT, last},
+		{"Carol", lastTTT, last},
+		{"Hal", lastTTT, last},
+		{"Gus", f.tttID, f.seasonID},
+		{"Erin", f.knrID, f.seasonID},
+	} {
+		m, err := s.UpsertMatch(ctx, Match{Key: fmt.Sprintf("mnp-sub-%d", i), SeasonID: sub.season, Week: 1, HomeTeamID: sub.team, AwayTeamID: f.knrID, VenueID: f.stnID})
+		if err != nil {
+			t.Fatalf("UpsertMatch: %v", err)
+		}
+		g, err := s.InsertGame(ctx, Game{MatchID: m, Round: 2, MachineKey: "TZ"})
+		if err != nil {
+			t.Fatalf("InsertGame: %v", err)
+		}
+		if err := s.InsertGameResult(ctx, GameResult{GameID: g, PlayerID: ids[sub.player], TeamID: sub.team, Position: 1, Score: 100}); err != nil {
+			t.Fatalf("InsertGameResult: %v", err)
+		}
+	}
+
+	got, err := s.ListSubs(ctx, "TTT")
+	if err != nil {
+		t.Fatalf("ListSubs: %v", err)
+	}
+	// A sub this season counts for more than two last season, which count
+	// for more than one. Carol isn't listed, since she's on a roster now,
+	// and nor is Hal, who played for TTT on its roster, nor TTT's own
+	// players.
+	want := []PlayerSummary{{Name: "Gus"}, {Name: "Erin", IPR: 3}, {Name: "Frank"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ListSubs(...): -want, +got:\n%s", diff)
+	}
+}
+
+func TestListIPRs(t *testing.T) {
+	s, _ := newTestStore(t)
+
+	got, err := s.ListIPRs(context.Background())
+	if err != nil {
+		t.Fatalf("ListIPRs: %v", err)
+	}
+	want := map[string]int{"Alice": 4, "Bob": 2}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ListIPRs(...): -want, +got:\n%s", diff)
 	}
 }

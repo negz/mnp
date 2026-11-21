@@ -85,6 +85,76 @@
     .row p {
       margin-bottom: 0.25rem;
     }
+    .pick-layout {
+      display: grid;
+      gap: 1rem 3rem;
+    }
+    #picks {
+      transition: opacity 0.2s;
+    }
+    #picks.htmx-request {
+      opacity: 0.4;
+    }
+    nav.rounds a[aria-current] {
+      font-weight: bold;
+      text-decoration: underline;
+      text-underline-offset: 0.3em;
+    }
+    .pin-editor {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0 0.75rem;
+      margin-bottom: 0.5rem;
+    }
+    .pin-editor select {
+      width: auto;
+      max-width: 100%;
+      margin-bottom: 0.5rem;
+    }
+    .row-sub mark {
+      padding: 0 0.25rem;
+    }
+    .pick-rest {
+      margin-top: 0.75rem;
+    }
+    details.choices summary {
+      font-weight: bold;
+    }
+    .machines label {
+      display: block;
+      margin-bottom: 0.25rem;
+    }
+    .lineup-player {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 1rem;
+    }
+    .lineup-player label {
+      margin-bottom: 0.25rem;
+    }
+    .lineup-player label.must {
+      white-space: nowrap;
+    }
+    .subs {
+      margin: 0.75rem 0 0.5rem;
+    }
+    .subs button {
+      width: auto;
+      padding: 0.25rem 0.5rem;
+      margin: 0 0.25rem 0.25rem 0;
+      font-size: 0.875em;
+    }
+    @media (min-width: 1024px) {
+      .pick-layout {
+        grid-template-columns: 3fr 2fr;
+        align-items: start;
+      }
+      .machines {
+        columns: 2;
+      }
+    }
     @media (max-width: 768px) {
       .page-header {
         display: block;

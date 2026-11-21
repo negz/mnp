@@ -15,15 +15,6 @@ import (
 	"github.com/negz/mnp/internal/points"
 )
 
-// Match bonus points need every player in a lineup to play at least 3 games.
-// A full lineup of 10 has exactly enough games for that, so nobody can play a
-// 4th without leaving someone else short.
-const (
-	minGames   = 3
-	fullLineup = 10
-	rounds     = 4
-)
-
 // alternates is how many alternates to suggest for each game.
 const alternates = 2
 
@@ -104,7 +95,7 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 	}
 
 	picker, responder := m.Picker(m.Round), m.Responder(m.Round)
-	doubles := m.Round == 1 || m.Round == rounds
+	doubles := live.Doubles(m.Round)
 	slots, maxPoints := 1, 3
 	if doubles {
 		slots, maxPoints = 2, 5
@@ -369,13 +360,11 @@ func assign(games int, lineup []live.Player, slots, round int, points func(game 
 		return nil, nil
 	}
 
-	// After this round there are this many rounds left to catch up in.
-	left := rounds - round
 	must := make([]bool, len(lineup))
 	cannot := make([]bool, len(lineup))
 	for i, p := range lineup {
-		must[i] = minGames-p.NumPlayed > left
-		cannot[i] = len(lineup) >= fullLineup && p.NumPlayed >= minGames
+		must[i] = live.MustPlay(p, round)
+		cannot[i] = !live.CanPlay(p, len(lineup))
 	}
 
 	if plan, cost := search(games, len(lineup), slots, must, cannot, points); plan != nil {

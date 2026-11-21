@@ -193,3 +193,69 @@ func TestPickerResponder(t *testing.T) {
 		t.Errorf("The away team should pick rounds 1 and 3, the home team 2 and 4: -want, +got:\n%s", diff)
 	}
 }
+
+func TestMustPlay(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		played int
+		round  int
+		want   bool
+	}{
+		"SatOutOnce": {
+			reason: "A player who sat out a round before the last two must play both.",
+			played: 1, round: 3,
+			want: true,
+		},
+		"OnTrack": {
+			reason: "A player who's played every round so far can sit out one.",
+			played: 2, round: 3,
+		},
+		"FirstRound": {
+			reason: "Nobody must play the first round.",
+			played: 0, round: 1,
+		},
+		"SatOutFirstRound": {
+			reason: "A player who sat out the first round must play the rest.",
+			played: 0, round: 2,
+			want: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := MustPlay(Player{NumPlayed: tc.played}, tc.round); got != tc.want {
+				t.Errorf("\n%s\nMustPlay(%d played, round %d): want %t, got %t", tc.reason, tc.played, tc.round, tc.want, got)
+			}
+		})
+	}
+}
+
+func TestCanPlay(t *testing.T) {
+	cases := map[string]struct {
+		reason string
+		played int
+		lineup int
+		want   bool
+	}{
+		"FullLineupPlayedThree": {
+			reason: "In a full lineup, a player who's played 3 games can't play a 4th.",
+			played: 3, lineup: 10,
+		},
+		"FullLineupPlayedTwo": {
+			reason: "In a full lineup, a player who's played 2 games can play a 3rd.",
+			played: 2, lineup: 10,
+			want: true,
+		},
+		"ShortLineup": {
+			reason: "In a short lineup, a player who's played 3 games can play a 4th.",
+			played: 3, lineup: 9,
+			want: true,
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := CanPlay(Player{NumPlayed: tc.played}, tc.lineup); got != tc.want {
+				t.Errorf("\n%s\nCanPlay(%d played, lineup of %d): want %t, got %t", tc.reason, tc.played, tc.lineup, tc.want, got)
+			}
+		})
+	}
+}

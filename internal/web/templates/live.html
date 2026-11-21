@@ -60,7 +60,7 @@
   </dl>
 </details>
 {{else}}
-<p class="live-round"><strong>{{.Status}}</strong><br><small class="muted">Suggestions appear here when {{$.Team1}} is responding to {{$.Team2}}'s picks. Reload to check.</small></p>
+<p class="live-round"><strong>{{.Status}}</strong><br><small class="muted">{{if .Picking}}<a href="/pick?venue={{$.Venue}}&t1={{$.Team1}}&t2={{$.Team2}}">Suggest {{$.Team1}}'s picks →</a>{{else}}Suggestions appear here when {{$.Team1}} is responding to {{$.Team2}}'s picks. Reload to check.{{end}}</small></p>
 {{end}}
 {{else}}
 <p>{{.Team1}} and {{.Team2}} aren't playing each other today.</p>

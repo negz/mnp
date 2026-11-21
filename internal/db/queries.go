@@ -1,9 +1,13 @@
 package db
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
+
+	"github.com/negz/mnp/internal/recency"
 )
 
 // TeamSummary contains team info for display, including venue name.
@@ -180,6 +184,99 @@ func (s *SQLiteStore) ListPlayers(ctx context.Context, search string) ([]PlayerS
 	}
 
 	return result, nil
+}
+
+// ListSubs returns players who've played for a team without being on its
+// roster, and who aren't on any team's roster now, so could sub for it again.
+// Those who've subbed for it the most lately come first.
+func (s *SQLiteStore) ListSubs(ctx context.Context, teamKey string) ([]PlayerSummary, error) {
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get latest season: %w", err)
+	}
+
+	// Starting from the team's matches, rather than every game result, lets
+	// SQLite use the index on each game's results.
+	rows, err := s.db.QueryContext(ctx, `
+		WITH team AS (
+			SELECT id FROM teams WHERE key = ?
+		),
+		rostered AS (
+			SELECT r.player_id FROM rosters r
+			JOIN teams t ON t.id = r.team_id
+			WHERE t.season_id = (
+				SELECT s.id FROM seasons s
+				WHERE EXISTS (SELECT 1 FROM teams t WHERE t.season_id = s.id)
+				ORDER BY s.number DESC LIMIT 1
+			)
+		),
+		played AS (
+			SELECT id, season_id FROM matches
+			WHERE home_team_id IN team OR away_team_id IN team
+		)
+		SELECT p.name, COALESCE(ipr.ipr, 0), s.number, COUNT(DISTINCT m.id)
+		FROM played m
+		JOIN games g ON g.match_id = m.id
+		JOIN game_results gr ON gr.game_id = g.id AND gr.team_id IN team
+		JOIN players p ON p.id = gr.player_id
+		JOIN seasons s ON s.id = m.season_id
+		LEFT JOIN player_iprs ipr ON ipr.name = p.name
+		LEFT JOIN rosters r ON r.player_id = gr.player_id AND r.team_id = gr.team_id
+		WHERE r.player_id IS NULL
+		  AND gr.player_id NOT IN rostered
+		GROUP BY p.id, s.number
+	`, teamKey)
+	if err != nil {
+		return nil, fmt.Errorf("query subs: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var subs []PlayerSummary
+	matches := make(map[string]float64)
+	for rows.Next() {
+		var p PlayerSummary
+		var season, n int
+		if err := rows.Scan(&p.Name, &p.IPR, &season, &n); err != nil {
+			return nil, fmt.Errorf("scan sub: %w", err)
+		}
+		if _, ok := matches[p.Name]; !ok {
+			subs = append(subs, p)
+		}
+		matches[p.Name] += float64(n) * recency.Weight(season, latest, recency.PlayHalfLife)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate subs: %w", err)
+	}
+
+	slices.SortStableFunc(subs, func(a, b PlayerSummary) int {
+		return cmp.Or(cmp.Compare(matches[b.Name], matches[a.Name]), cmp.Compare(a.Name, b.Name))
+	})
+	return subs, nil
+}
+
+// ListIPRs returns every rated player's IPR, keyed by their name.
+func (s *SQLiteStore) ListIPRs(ctx context.Context) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, "SELECT name, ipr FROM player_iprs")
+	if err != nil {
+		return nil, fmt.Errorf("query IPRs: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	iprs := make(map[string]int)
+	for rows.Next() {
+		var name string
+		var ipr int
+		if err := rows.Scan(&name, &ipr); err != nil {
+			return nil, fmt.Errorf("scan IPR: %w", err)
+		}
+		iprs[name] = ipr
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate IPRs: %w", err)
+	}
+	return iprs, nil
 }
 
 // ListMachineKeys returns the keys of all known machines.
