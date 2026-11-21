@@ -12,6 +12,7 @@ import (
 	"github.com/negz/mnp/internal/db"
 	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/output"
+	"github.com/negz/mnp/internal/points"
 )
 
 // Match bonus points need every player in a lineup to play at least 3 games.
@@ -26,11 +27,17 @@ const (
 // alternates is how many alternates to suggest for each game.
 const alternates = 2
 
+// clearPick is how many points sending other players to a game must cost the
+// round for the suggestion to be a clear pick. Near the best response most
+// games cost the round little to change, so clear picks are rare.
+const clearPick = 0.25
+
 // Store is the set of queries needed to respond to picks.
 type Store interface {
 	GetLeagueP50(ctx context.Context) (map[string]float64, error)
 	GetMachineNames(ctx context.Context) (map[string]string, error)
 	GetSinglePlayerMachineStats(ctx context.Context, playerName, venueKey string) ([]db.PlayerMachineStats, error)
+	GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (db.RelativeScore, error)
 }
 
 // A Player is in tonight's lineup, with their stats on one machine.
@@ -62,7 +69,8 @@ type Game struct {
 	Alternates  []Option // The next best players to send, whether or not they're suggested elsewhere.
 	Points      float64  // Points the suggested players expect to win.
 	MaxPoints   int      // Points available.
-	FewGames    bool     // Whether either side has played the machine fewer than 3 times on average.
+	Win         float64  // The chance the suggested players win the game, taking most of its points.
+	ClearPick   bool     // Whether sending other players would cost the round clearPick points or more.
 }
 
 // Result is the output of a respond query.
@@ -110,13 +118,18 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 		Responder: responder.Key,
 	}
 
-	st := &stats{store: s, machines: make(map[string]map[string]db.PlayerMachineStats)}
+	st := &stats{
+		store:    s,
+		league:   league,
+		machines: make(map[string]map[string]db.PlayerMachineStats),
+		relative: make(map[string]db.RelativeScore),
+	}
 	picks := make([]pick, 0, len(round.Games))
 	for _, g := range round.Games {
 		if g.Machine == "" {
 			continue
 		}
-		p, err := newPick(ctx, st, m, g, doubles, league[g.Machine])
+		p, err := newPick(ctx, st, m, g, doubles)
 		if err != nil {
 			return nil, err
 		}
@@ -125,10 +138,10 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 		picks = append(picks, p)
 	}
 
-	points := func(game int, players []int) float64 {
-		return picks[game].points(players, doubles)
+	expect := func(game int, players []int) float64 {
+		return picks[game].points(players)
 	}
-	plan := assign(len(picks), responder.Lineup, slots, m.Round, points)
+	plan, cost := assign(len(picks), responder.Lineup, slots, m.Round, expect)
 
 	placed := make(map[int]string)
 	for i, ps := range plan {
@@ -139,12 +152,13 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 
 	for i, p := range picks {
 		g := p.game
-		g.Points = points(i, plan[i])
+		g.Points = expect(i, plan[i])
+		g.Win = p.win(plan[i], doubles)
+		g.ClearPick = cost[i] >= clearPick && !math.IsInf(cost[i], 1)
 		for _, o := range plan[i] {
 			g.Suggested = append(g.Suggested, p.options[o])
 		}
 		slices.SortFunc(g.Suggested, byPoints)
-		g.FewGames = averageGames(g.Theirs) < minGames || averageGames(players(g.Suggested)) < minGames
 		g.Alternates = alternatesFor(p.options, plan[i], placed)
 
 		r.Games = append(r.Games, g)
@@ -161,29 +175,47 @@ func Analyze(ctx context.Context, s Store, m *live.Match) (*Result, error) {
 	return r, nil
 }
 
-// stats loads each player's stats on every machine, once per player.
+// stats loads each player's stats, once per player.
 type stats struct {
 	store    Store
+	league   map[string]float64
 	machines map[string]map[string]db.PlayerMachineStats
+	relative map[string]db.RelativeScore
 }
 
-// player returns a player in tonight's lineup, with their stats on a machine.
-func (s *stats) player(ctx context.Context, p live.Player, machine string) (Player, error) {
+// player returns a player in tonight's lineup, with their stats on a machine,
+// and their likely score on it.
+func (s *stats) player(ctx context.Context, p live.Player, machine string, home, picked bool) (Player, points.Score, error) {
 	if s.machines[p.Name] == nil {
 		ms, err := s.store.GetSinglePlayerMachineStats(ctx, p.Name, "")
 		if err != nil {
-			return Player{}, fmt.Errorf("load stats for %s: %w", p.Name, err)
+			return Player{}, points.Score{}, fmt.Errorf("load stats for %s: %w", p.Name, err)
 		}
 		s.machines[p.Name] = make(map[string]db.PlayerMachineStats, len(ms))
 		for _, st := range ms {
 			s.machines[p.Name][st.MachineKey] = st
 		}
+		rel, err := s.store.GetRelativeScore(ctx, p.Name, s.league)
+		if err != nil {
+			return Player{}, points.Score{}, fmt.Errorf("load relative score for %s: %w", p.Name, err)
+		}
+		s.relative[p.Name] = rel
 	}
 	st := s.machines[p.Name][machine]
+	rel := s.relative[p.Name]
+	known := points.Player{
+		IPR:         p.IPR,
+		Home:        home,
+		Picked:      picked,
+		Games:       st.Games,
+		P50:         st.P50Score,
+		LeagueGames: rel.Games,
+		Relative:    rel.P50,
+	}
 	return Player{
 		Name: p.Name, IPR: p.IPR, Sub: p.Sub, Played: p.NumPlayed,
 		Games: st.Games, P50Score: st.P50Score, P90Score: st.P90Score,
-	}, nil
+	}, points.DefaultModel().Score(known, s.league[machine]), nil
 }
 
 // A pick is one of the picking team's picks, with every player in the
@@ -191,56 +223,104 @@ func (s *stats) player(ctx context.Context, p live.Player, machine string) (Play
 type pick struct {
 	game    Game
 	options []Option // Indexed like the responding team's lineup.
-	ours    []score  // Indexed like the responding team's lineup.
-	theirs  []score
+
+	// expected is the points players in the responding team's lineup expect
+	// to win, indexed by their positions in it. In doubles expected[i][j]
+	// is for players i and j together, and expected[i][i] for player i
+	// without a partner. In singles only expected[i][i] is used. Searching
+	// for the best response asks for the same players many times, so
+	// they're worked out once up front.
+	expected [][]float64
+
+	ours   []points.Score // Indexed like the responding team's lineup.
+	theirs []points.Score // The picking team's players.
 }
 
-func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool, league float64) (pick, error) {
+func newPick(ctx context.Context, st *stats, m *live.Match, g live.Game, doubles bool) (pick, error) {
 	p := pick{game: Game{N: g.N, MachineKey: g.Machine}}
+	pickerHome := m.Picker(m.Round) == &m.Home
 
 	keys := []string{g.Player1}
 	if doubles {
 		keys = append(keys, g.Player3)
 	}
+	theirs := make([]points.Score, 0, len(keys))
 	for _, k := range keys {
 		lp, ok := m.Player(k)
 		if !ok {
 			continue
 		}
-		t, err := st.player(ctx, lp, g.Machine)
+		t, est, err := st.player(ctx, lp, g.Machine, pickerHome, true)
 		if err != nil {
 			return pick{}, err
 		}
 		p.game.Theirs = append(p.game.Theirs, t)
-		p.theirs = append(p.theirs, estimate(t, league))
+		theirs = append(theirs, est)
 	}
 
-	for _, lp := range m.Responder(m.Round).Lineup {
-		o, err := st.player(ctx, lp, g.Machine)
+	lineup := m.Responder(m.Round).Lineup
+	ours := make([]points.Score, 0, len(lineup))
+	for _, lp := range lineup {
+		o, est, err := st.player(ctx, lp, g.Machine, !pickerHome, false)
 		if err != nil {
 			return pick{}, err
 		}
-		est := estimate(o, league)
-		p.options = append(p.options, Option{Player: o, Points: alone(est, p.theirs, doubles)})
-		p.ours = append(p.ours, est)
+		p.options = append(p.options, Option{Player: o, Points: alone(est, theirs, doubles)})
+		ours = append(ours, est)
+	}
+
+	p.ours, p.theirs = ours, theirs
+	p.expected = make([][]float64, len(ours))
+	for i := range ours {
+		p.expected[i] = make([]float64, len(ours))
+	}
+	if len(theirs) == 0 {
+		return p, nil
+	}
+	for i := range ours {
+		if !doubles {
+			p.expected[i][i] = points.Singles(ours[i], theirs[0])
+			continue
+		}
+		for j := i; j < len(ours); j++ {
+			pair := []points.Score{ours[i], ours[j]}
+			if j == i {
+				pair = pair[:1]
+			}
+			p.expected[i][j] = points.Doubles(pair, theirs)
+			p.expected[j][i] = p.expected[i][j]
+		}
 	}
 	return p, nil
 }
 
 // points returns the points the given players, indexed like the responding
 // team's lineup, expect to win on the pick.
-func (p pick) points(players []int, doubles bool) float64 {
-	if len(p.theirs) == 0 || len(players) == 0 {
+func (p pick) points(players []int) float64 {
+	switch len(players) {
+	case 0:
+		return 0
+	case 1:
+		return p.expected[players[0]][players[0]]
+	default:
+		return p.expected[players[0]][players[1]]
+	}
+}
+
+// win returns the chance the given players, indexed like the responding team's
+// lineup, win the pick.
+func (p pick) win(players []int, doubles bool) float64 {
+	if len(players) == 0 || len(p.theirs) == 0 {
 		return 0
 	}
 	if !doubles {
-		return singlesPoints(p.ours[players[0]], p.theirs[0])
+		return points.Beats(p.ours[players[0]], p.theirs[0])
 	}
-	ours := make([]score, len(players))
+	ours := make([]points.Score, len(players))
 	for i, pl := range players {
 		ours[i] = p.ours[pl]
 	}
-	return doublesPoints(ours, p.theirs)
+	return points.DoublesWin(ours, p.theirs)
 }
 
 // alternatesFor returns the best players for a game other than those suggested
@@ -258,14 +338,6 @@ func alternatesFor(options []Option, suggested []int, placed map[int]string) []O
 	return rest[:min(alternates, len(rest))]
 }
 
-func players(options []Option) []Player {
-	ps := make([]Player, len(options))
-	for i, o := range options {
-		ps[i] = o.Player
-	}
-	return ps
-}
-
 func byPoints(a, b Option) int {
 	return cmp.Or(cmp.Compare(b.Points, a.Points), cmp.Compare(a.Name, b.Name))
 }
@@ -273,39 +345,28 @@ func byPoints(a, b Option) int {
 // alone returns the points a player expects to win on their own: the whole
 // game in singles, or the points for beating each player on the other team in
 // doubles.
-func alone(ours score, theirs []score, doubles bool) float64 {
+func alone(ours points.Score, theirs []points.Score, doubles bool) float64 {
 	if len(theirs) == 0 {
 		return 0
 	}
 	if !doubles {
-		return singlesPoints(ours, theirs[0])
+		return points.Singles(ours, theirs[0])
 	}
-	var points float64
+	var total float64
 	for _, t := range theirs {
-		points += beats(ours, t)
+		total += points.Beats(ours, t)
 	}
-	return points
-}
-
-// averageGames returns the average number of games players have played on a
-// machine.
-func averageGames(players []Player) float64 {
-	if len(players) == 0 {
-		return 0
-	}
-	var n int
-	for _, p := range players {
-		n += p.Games
-	}
-	return float64(n) / float64(len(players))
+	return total
 }
 
 // assign returns the indexes of the lineup's players to send to each game to win
 // the most points in the round. It sends each player to at most one game, and
-// keeps every player on track to play at least 3 games in the match.
-func assign(games int, lineup []live.Player, slots, round int, points func(game int, players []int) float64) [][]int {
+// keeps every player on track to play at least 3 games in the match. For each
+// game it also returns how many points the round would lose by sending other
+// players to it, or +Inf if nobody else could go.
+func assign(games int, lineup []live.Player, slots, round int, points func(game int, players []int) float64) (plan [][]int, cost []float64) {
 	if games == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// After this round there are this many rounds left to catch up in.
@@ -317,22 +378,26 @@ func assign(games int, lineup []live.Player, slots, round int, points func(game 
 		cannot[i] = len(lineup) >= fullLineup && p.NumPlayed >= minGames
 	}
 
-	if plan := search(games, len(lineup), slots, must, cannot, points); plan != nil {
-		return plan
+	if plan, cost := search(games, len(lineup), slots, must, cannot, points); plan != nil {
+		return plan, cost
 	}
 	// The rules can't be met, e.g. in a short lineup. Ignore them rather than
 	// suggest nothing.
 	return search(games, len(lineup), slots, make([]bool, len(lineup)), make([]bool, len(lineup)), points)
 }
 
-// search tries every way of sending players to games, and returns the one that
-// wins the most points while respecting must and cannot. It returns nil if no
-// way does.
-func search(games, players, slots int, must, cannot []bool, points func(game int, players []int) float64) [][]int {
+// search tries every way of sending at most two players to each game, and
+// returns the one that wins the most points while respecting must and cannot.
+// It returns nil if no way does. For each game it also returns how many points
+// the round would lose by sending other players to it, or +Inf if nobody else
+// could go.
+func search(games, players, slots int, must, cannot []bool, points func(game int, players []int) float64) ([][]int, []float64) {
 	best := math.Inf(-1)
 	var plan [][]int
 	used := make([]bool, players)
 	current := make([][]int, games)
+
+	most := newTotals(games, players)
 
 	// available reports whether a player could still be sent to a game.
 	available := func(p int) bool { return !used[p] && !cannot[p] }
@@ -340,7 +405,11 @@ func search(games, players, slots int, must, cannot []bool, points func(game int
 	var try func(game, from int, total float64)
 	try = func(game, from int, total float64) {
 		if game == games {
-			if total > best && satisfied(must, used) {
+			if !satisfied(must, used) {
+				return
+			}
+			most.add(current, total)
+			if total > best {
 				best = total
 				plan = clone(current)
 			}
@@ -378,7 +447,65 @@ func search(games, players, slots int, must, cannot []bool, points func(game int
 		try(game+1, 0, total+points(game, current[game]))
 	}
 	try(0, 0, 0)
-	return plan
+
+	if plan == nil {
+		return nil, nil
+	}
+	cost := make([]float64, games)
+	for g := range cost {
+		cost[g] = best - most.without(g, plan[g])
+	}
+	return plan, cost
+}
+
+// totals records the most points a round could win sending each set of at most
+// two players to each game. A set is keyed by its players' indexes, in order,
+// with the number of players standing in for a missing player.
+type totals struct {
+	n    int // Players, plus one for a missing player.
+	most [][]float64
+}
+
+func newTotals(games, players int) *totals {
+	t := &totals{n: players + 1, most: make([][]float64, games)}
+	for g := range t.most {
+		t.most[g] = make([]float64, t.n*t.n)
+		for k := range t.most[g] {
+			t.most[g][k] = math.Inf(-1)
+		}
+	}
+	return t
+}
+
+func (t *totals) key(players []int) int {
+	a, b := t.n-1, t.n-1
+	if len(players) > 0 {
+		a = players[0]
+	}
+	if len(players) > 1 {
+		b = players[1]
+	}
+	return a*t.n + b
+}
+
+// add records the points a round wins sending players to games.
+func (t *totals) add(plan [][]int, total float64) {
+	for g, players := range plan {
+		k := t.key(players)
+		t.most[g][k] = max(t.most[g][k], total)
+	}
+}
+
+// without returns the most points the round could win sending players other
+// than the given ones to a game, or -Inf if nobody else could go.
+func (t *totals) without(game int, players []int) float64 {
+	most := math.Inf(-1)
+	for k, total := range t.most[game] {
+		if k != t.key(players) {
+			most = max(most, total)
+		}
+	}
+	return most
 }
 
 // satisfied reports whether every player who must play is used.

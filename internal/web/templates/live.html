@@ -16,15 +16,15 @@
 
 {{with .Live}}
 {{with .Response}}
-<p class="live-round"><strong>Round {{.Round}}</strong> · {{.Responder}} responding<br><small class="muted">{{.Picker}} picked {{len .Games}} {{if .Doubles}}doubles{{else}}singles{{end}} games. The suggestions expect about {{formatPoints .Points}} of {{.MaxPoints}} points.</small></p>
+<p class="live-round"><strong>Round {{.Round}}</strong> · {{.Responder}} responding<br><small class="muted">{{.Picker}} picked {{len .Games}} {{if .Doubles}}doubles{{else}}singles{{end}} games. With these suggestions, {{.Responder}} can expect about {{formatPoints .Points}} of {{.MaxPoints}} points.</small></p>
 
 <section>
   {{range .Games}}
   <details class="row">
     <summary>
       <span class="row-title">{{.MachineName}}</span>
-      <span class="row-value">{{formatPoints .Points}} of {{.MaxPoints}} points</span>
-      <small class="row-sub">{{range $i, $p := .Theirs}}{{if $i}} & {{end}}{{$p.Name}}{{end}}{{if .FewGames}} · few games{{end}}</small>
+      <span class="row-value">{{formatPercent .Win}} <small class="muted">to win</small></span>
+      <small class="row-sub">{{range $i, $p := .Theirs}}{{if $i}} & {{end}}{{$p.Name}}{{end}} vs <strong>{{range $i, $o := .Suggested}}{{if $i}} & {{end}}{{$o.Name}}{{end}}</strong>{{if .ClearPick}} · clear pick{{end}}</small>
     </summary>
     <div class="grid">
       <div>
@@ -50,8 +50,9 @@
   <summary>How to read this</summary>
   <dl>
     <dt>Suggested</dt><dd>The response expected to win the most points across the whole round. It uses each of your players once, and makes sure everyone can still play three games tonight.</dd>
-    <dt>Points</dt><dd>The points the suggested players are expected to win, using everyone's typical and high scores on the machine. Players with few games on a machine are assumed to play like others with their IPR.</dd>
-    <dt>Few games</dt><dd>Your suggested players, or theirs, average fewer than 3 games on the machine, so the estimate leans on IPR.</dd>
+    <dt>Expect about</dt><dd>The points your suggested players are expected to win across the round. Each player's likely score comes mostly from their IPR and how they score against the league on every machine, and more from their typical score on this one the more they've played it. Players score a little better at home, and on machines their team picked.</dd>
+    <dt>To win</dt><dd>The chance your suggested players win the game. In doubles that means taking 3 or more of its 5 points.</dd>
+    <dt>Clear pick</dt><dd>Sending anyone else here would cost the round at least a quarter of a point. Most games cost the round less than that to change, so for those your own read of who's playing well tonight can decide.</dd>
     <dt>Or</dt><dd>The players next most likely to win points on their own, even if they're suggested for another game.</dd>
     {{template "term-typical"}}
     {{template "term-high"}}

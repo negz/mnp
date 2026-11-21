@@ -4,7 +4,10 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	"slices"
+
+	"github.com/negz/mnp/internal/recency"
 )
 
 // PlayerStats contains aggregated stats for a player on a specific machine.
@@ -87,15 +90,15 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 
 	type player struct {
 		ipr   int
-		games []scoredGame
+		games []recency.Game
 	}
-	machines := make(map[string][]scoredGame)
+	machines := make(map[string][]recency.Game)
 	players := make(map[string]map[string]*player)
 	for rows.Next() {
 		var machine, name string
 		var ipr int
-		var g scoredGame
-		if err := rows.Scan(&machine, &name, &ipr, &g.season, &g.score); err != nil {
+		var g recency.Game
+		if err := rows.Scan(&machine, &name, &ipr, &g.Season, &g.Score); err != nil {
 			return nil, fmt.Errorf("scan team machine stats: %w", err)
 		}
 		machines[machine] = append(machines[machine], g)
@@ -125,11 +128,11 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 				LikelyPlayer: LikelyPlayer{
 					Name:     name,
 					Games:    len(p.games),
-					P50Score: percentile(p.games, latest, 0.5),
-					P90Score: percentile(p.games, latest, 0.9),
+					P50Score: recency.Percentile(p.games, latest, recency.ScoreHalfLife, 0.5),
+					P90Score: recency.Percentile(p.games, latest, recency.ScoreHalfLife, 0.9),
 					IPR:      p.ipr,
 				},
-				recent: plays(p.games, latest),
+				recent: recency.Plays(p.games, latest, recency.PlayHalfLife),
 			})
 		}
 		slices.SortFunc(likely, func(a, b ranked) int {
@@ -143,8 +146,8 @@ func (s *SQLiteStore) GetTeamMachineStats(ctx context.Context, teamKey, venueKey
 		ts := TeamMachineStats{
 			MachineKey: machine,
 			Games:      len(games),
-			P50Score:   percentile(games, latest, 0.5),
-			P90Score:   percentile(games, latest, 0.9),
+			P50Score:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5),
+			P90Score:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.9),
 		}
 		for _, r := range likely[:min(3, len(likely))] {
 			ts.LikelyPlayers = append(ts.LikelyPlayers, r.LikelyPlayer)
@@ -233,11 +236,11 @@ func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, err
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	machines := make(map[string][]scoredGame)
+	machines := make(map[string][]recency.Game)
 	for rows.Next() {
 		var machine string
-		var g scoredGame
-		if err := rows.Scan(&machine, &g.season, &g.score); err != nil {
+		var g recency.Game
+		if err := rows.Scan(&machine, &g.Season, &g.Score); err != nil {
 			return nil, fmt.Errorf("scan league P50: %w", err)
 		}
 		machines[machine] = append(machines[machine], g)
@@ -249,7 +252,7 @@ func (s *SQLiteStore) GetLeagueP50(ctx context.Context) (map[string]float64, err
 
 	result := make(map[string]float64, len(machines))
 	for machine, games := range machines {
-		result[machine] = percentile(games, latest, 0.5)
+		result[machine] = recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5)
 	}
 	return result, nil
 }
@@ -294,11 +297,11 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 	}
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
-	machines := make(map[string][]scoredGame)
+	machines := make(map[string][]recency.Game)
 	for rows.Next() {
 		var machine string
-		var g scoredGame
-		if err := rows.Scan(&machine, &g.season, &g.score); err != nil {
+		var g recency.Game
+		if err := rows.Scan(&machine, &g.Season, &g.Score); err != nil {
 			return nil, fmt.Errorf("scan single player machine stats: %w", err)
 		}
 		machines[machine] = append(machines[machine], g)
@@ -313,14 +316,70 @@ func (s *SQLiteStore) GetSinglePlayerMachineStats(ctx context.Context, playerNam
 		stats = append(stats, PlayerMachineStats{
 			MachineKey: machine,
 			Games:      len(games),
-			P50Score:   percentile(games, latest, 0.5),
-			P90Score:   percentile(games, latest, 0.9),
+			P50Score:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5),
+			P90Score:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.9),
 		})
 	}
 	slices.SortFunc(stats, func(a, b PlayerMachineStats) int {
 		return cmp.Or(cmp.Compare(b.Games, a.Games), cmp.Compare(a.MachineKey, b.MachineKey))
 	})
 	return stats, nil
+}
+
+// RelativeScore is how a player typically scores relative to the league.
+type RelativeScore struct {
+	Games int     // Games on machines the league has a typical score for.
+	P50   float64 // Median log ratio of their score to the league's typical score.
+}
+
+// GetRelativeScore returns how a player typically scores relative to the
+// league's typical score on each machine, given those typical scores. Recent
+// seasons count for more. Scores of 1 or less, which record a forfeit or
+// disqualification, don't count.
+func (s *SQLiteStore) GetRelativeScore(ctx context.Context, playerName string, league map[string]float64) (RelativeScore, error) {
+	latest, err := s.MaxSeasonNumber(ctx)
+	if err != nil {
+		return RelativeScore{}, fmt.Errorf("get latest season: %w", err)
+	}
+
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT g.machine_key, s.number, gr.score
+		FROM game_results gr
+		JOIN players p ON p.id = gr.player_id
+		JOIN games g ON g.id = gr.game_id
+		JOIN matches m ON m.id = g.match_id
+		JOIN seasons s ON s.id = m.season_id
+		WHERE p.name = ?
+		  AND g.machine_key IS NOT NULL
+		  AND gr.score > 1
+	`, playerName)
+	if err != nil {
+		return RelativeScore{}, fmt.Errorf("query relative score: %w", err)
+	}
+	defer rows.Close() //nolint:errcheck // Read-only query.
+
+	var games []recency.Game
+	for rows.Next() {
+		var machine string
+		var g recency.Game
+		if err := rows.Scan(&machine, &g.Season, &g.Score); err != nil {
+			return RelativeScore{}, fmt.Errorf("scan relative score: %w", err)
+		}
+		if league[machine] <= 0 {
+			continue
+		}
+		g.Score = math.Log(g.Score / league[machine])
+		games = append(games, g)
+	}
+
+	if err := rows.Err(); err != nil {
+		return RelativeScore{}, fmt.Errorf("iterate relative score: %w", err)
+	}
+
+	return RelativeScore{
+		Games: len(games),
+		P50:   recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5),
+	}, nil
 }
 
 // GetPlayer returns a player's summary info (latest season).
@@ -412,12 +471,12 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 	defer rows.Close() //nolint:errcheck // Read-only query.
 
 	iprs := make(map[string]int)
-	players := make(map[string][]scoredGame)
+	players := make(map[string][]recency.Game)
 	for rows.Next() {
 		var name string
 		var ipr int
-		var g scoredGame
-		if err := rows.Scan(&name, &ipr, &g.season, &g.score); err != nil {
+		var g recency.Game
+		if err := rows.Scan(&name, &ipr, &g.Season, &g.Score); err != nil {
 			return nil, fmt.Errorf("scan player stats: %w", err)
 		}
 		iprs[name] = ipr
@@ -433,8 +492,8 @@ func (s *SQLiteStore) GetPlayerMachineStats(ctx context.Context, teamKey, machin
 		stats = append(stats, PlayerStats{
 			Name:     name,
 			Games:    len(games),
-			P50Score: percentile(games, latest, 0.5),
-			P90Score: percentile(games, latest, 0.9),
+			P50Score: recency.Percentile(games, latest, recency.ScoreHalfLife, 0.5),
+			P90Score: recency.Percentile(games, latest, recency.ScoreHalfLife, 0.9),
 			IPR:      iprs[name],
 		})
 	}
