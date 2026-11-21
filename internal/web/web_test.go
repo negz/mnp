@@ -1,10 +1,14 @@
 package web
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/strategy/matchup"
 )
 
@@ -99,6 +103,93 @@ func TestFormatPicks(t *testing.T) {
 			got := formatPicks(tc.m, "TTT", "DRK")
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Errorf("\n%s\nformatPicks(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+// respondStore is a respond.Store with no data. If started is set, it's closed
+// when work on suggestions starts, which then waits for release to be closed.
+type respondStore struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (s *respondStore) GetMachineNames(_ context.Context) (map[string]string, error) {
+	if s.started != nil {
+		close(s.started)
+		<-s.release
+	}
+	return nil, nil
+}
+
+func (s *respondStore) GetLeagueP50(_ context.Context) (map[string]float64, error) {
+	return nil, nil
+}
+
+func (s *respondStore) GetSinglePlayerMachineStats(_ context.Context, _, _ string) ([]db.PlayerMachineStats, error) {
+	return nil, nil
+}
+
+func (s *respondStore) GetRelativeScore(_ context.Context, _ string, _ map[string]float64) (db.RelativeScore, error) {
+	return db.RelativeScore{}, nil
+}
+
+func TestSuggestionsDontWaitOnOtherMatches(t *testing.T) {
+	responding := func(key string) *live.Match {
+		return &live.Match{Key: key, State: live.StateResponding, Round: 1, Rounds: []live.Round{{N: 1}}}
+	}
+	slow := &respondStore{started: make(chan struct{}), release: make(chan struct{})}
+	s := &suggestions{}
+
+	done := make(chan error)
+	go func() {
+		_, err := s.get(context.Background(), slow, responding("slow"))
+		done <- err
+	}()
+	<-slow.started
+
+	fast := make(chan error)
+	go func() {
+		_, err := s.get(context.Background(), &respondStore{}, responding("fast"))
+		fast <- err
+	}()
+	select {
+	case err := <-fast:
+		if err != nil {
+			t.Errorf("get(fast): %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Errorf("get(fast): still waiting on another match's suggestions")
+		close(slow.release)
+		<-fast
+		<-done
+		return
+	}
+
+	close(slow.release)
+	if err := <-done; err != nil {
+		t.Errorf("get(slow): %v", err)
+	}
+}
+
+func TestFormatPercent(t *testing.T) {
+	cases := map[string]struct {
+		p    float64
+		want string
+	}{
+		"Whole":         {p: 0.62, want: "62%"},
+		"RoundsUp":      {p: 0.625, want: "63%"},
+		"NearlyCertain": {p: 0.996, want: ">99%"},
+		"Certain":       {p: 1, want: ">99%"},
+		"Unlikely":      {p: 0.01, want: "1%"},
+		"NearlyNever":   {p: 0.004, want: "<1%"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if diff := cmp.Diff(tc.want, formatPercent(tc.p)); diff != "" {
+				t.Errorf("formatPercent(%v): -want, +got:\n%s", tc.p, diff)
 			}
 		})
 	}

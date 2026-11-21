@@ -7,6 +7,7 @@ import (
 
 	"github.com/alecthomas/kong"
 
+	"github.com/negz/mnp/cmd/mnp/backtest"
 	"github.com/negz/mnp/cmd/mnp/db"
 	"github.com/negz/mnp/cmd/mnp/machines"
 	"github.com/negz/mnp/cmd/mnp/matchup"
@@ -35,6 +36,7 @@ type cli struct {
 	Machines  machines.Command  `cmd:"" help:"List all machines."`
 	DB        db.Command        `cmd:"" help:"Database utilities."`
 	Serve     serve.Command     `cmd:"" help:"Start the web UI."`
+	Backtest  backtest.Command  `cmd:"" help:"Measure how well the points model predicts past games." hidden:""`
 
 	Cache cache.DB `embed:""`
 }

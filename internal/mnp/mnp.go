@@ -255,6 +255,47 @@ func (c *Client) extractAndLoad(ctx context.Context, store Store, seasons []int)
 	return nil
 }
 
+// SeasonData is a season's teams and matches.
+type SeasonData struct {
+	Number  int
+	Teams   []TeamData
+	Matches []MatchData
+}
+
+// ReadSeasons reads every season in the archive at archivePath, in order. It
+// reads the archive as it is, without syncing it.
+func ReadSeasons(archivePath string) ([]SeasonData, error) {
+	numbers, err := findSeasons(archivePath)
+	if err != nil {
+		return nil, fmt.Errorf("find seasons: %w", err)
+	}
+
+	seasons := make([]SeasonData, 0, len(numbers))
+	for _, n := range numbers {
+		seasonPath := filepath.Join(archivePath, fmt.Sprintf("season-%d", n))
+
+		var season Season
+		if err := season.Extract(filepath.Join(seasonPath, "season.json")); err != nil {
+			return nil, fmt.Errorf("extract season %d: %w", n, err)
+		}
+		sd := SeasonData{Number: n, Teams: season.Transform()}
+
+		paths, err := findMatchFiles(seasonPath)
+		if err != nil {
+			return nil, fmt.Errorf("find matches for season %d: %w", n, err)
+		}
+		for _, path := range paths {
+			var match Match
+			if err := match.Extract(path); err != nil {
+				return nil, fmt.Errorf("extract match %s: %w", filepath.Base(path), err)
+			}
+			sd.Matches = append(sd.Matches, match.Transform())
+		}
+		seasons = append(seasons, sd)
+	}
+	return seasons, nil
+}
+
 // findMatchFiles returns paths to all match JSON files in a season directory.
 func findMatchFiles(seasonPath string) ([]string, error) {
 	matchesDir := filepath.Join(seasonPath, "matches")

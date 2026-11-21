@@ -26,6 +26,11 @@ func Dir() string {
 	return filepath.Join(base, "mnp")
 }
 
+// ArchiveDir returns where the MNP data archive is cloned.
+func ArchiveDir() string {
+	return filepath.Join(Dir(), "mnp-data-archive")
+}
+
 // DB provides access to an MNP database.
 // It lazily opens the database on first use.
 type DB struct {
@@ -98,9 +103,7 @@ func (d *DB) Close() error {
 // Sync synchronizes data from the MNP data archive.
 // It respects staleness unless ForceSync is set.
 func (d *DB) Sync(ctx context.Context) error {
-	archivePath := filepath.Join(Dir(), "mnp-data-archive")
-
-	mnpClient := mnp.NewClient(archivePath,
+	mnpClient := mnp.NewClient(ArchiveDir(),
 		mnp.WithRepoURL(d.ArchiveURL),
 		mnp.WithLogger(d.log),
 		mnp.WithStore(d.store),

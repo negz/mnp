@@ -1370,3 +1370,42 @@ func TestIsoDate(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchTransform(t *testing.T) {
+	// A real archive match, trimmed to one doubles and one singles game.
+	var m Match
+	if err := m.Extract(filepath.Join("testdata", "match.json")); err != nil {
+		t.Fatalf("Extract(...): %v", err)
+	}
+
+	want := MatchData{
+		Key:     "mnp-23-10-ADB-TBT",
+		Week:    10,
+		Date:    "2026-04-13",
+		Venue:   VenueRef{Key: "T4B", Name: "4Bs Tavern"},
+		HomeKey: "TBT",
+		AwayKey: "ADB",
+		Games: []GameData{
+			{
+				Round: 1, MachineKey: "007", IsDoubles: true,
+				Results: []ResultData{
+					{PlayerName: "Thomas Homan", Score: 126918520, Position: 1, IsHome: false, IPR: 4, Points: 1},
+					{PlayerName: "Andy Bernard", Score: 44406100, Position: 2, IsHome: true, IPR: 2, Points: 0.5},
+					{PlayerName: "Bob Lyman", Score: 48803270, Position: 3, IsHome: false, IPR: 4, Points: 1},
+					{PlayerName: "Campbell Hancock", Score: 491720670, Position: 4, IsHome: true, IPR: 5, Points: 2.5},
+				},
+			},
+			{
+				Round: 2, MachineKey: "TOTAN", IsDoubles: false,
+				Results: []ResultData{
+					{PlayerName: "Jared Gamble", Score: 3685720, Position: 1, IsHome: true, IPR: 3, Points: 3},
+					{PlayerName: "Mohamed Sawani", Score: 570530, Position: 2, IsHome: false, IPR: 1, Points: 0},
+				},
+			},
+		},
+	}
+
+	if diff := cmp.Diff(want, m.Transform()); diff != "" {
+		t.Errorf("Transform(): -want, +got:\n%s", diff)
+	}
+}

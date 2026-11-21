@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -192,10 +193,11 @@ func newTemplateFuncs() template.FuncMap {
 			}
 			return output.FormatScore(score)
 		},
-		"formatEdge":   formatEdge,
-		"formatPicks":  formatPicks,
-		"isLive":       isLive,
-		"formatPoints": func(p float64) string { return fmt.Sprintf("%.1f", p) },
+		"formatEdge":    formatEdge,
+		"formatPicks":   formatPicks,
+		"isLive":        isLive,
+		"formatPoints":  func(p float64) string { return fmt.Sprintf("%.0f", math.Round(p)) },
+		"formatPercent": formatPercent,
 		"side": func(team, vs, machineKey string, players []matchup.LikelyPlayer) matchupSide {
 			return matchupSide{Team: team, Vs: vs, MachineKey: machineKey, Players: players}
 		},
@@ -580,31 +582,42 @@ func (s *Server) liveMatch(ctx context.Context, team1, team2 string, suggest boo
 // changes. Working them out takes a while, and a match changes much less often
 // than people look at it.
 type suggestions struct {
-	mu      sync.Mutex
-	matches map[string]suggestion
+	mu      sync.Mutex // Protects matches.
+	matches map[string]*suggestion
 }
 
+// A suggestion is held while it's worked out, so concurrent requests for a
+// match share the work without waiting on other matches.
 type suggestion struct {
-	m *live.Match
-	r *respond.Result
+	mu sync.Mutex
+	m  *live.Match
+	r  *respond.Result
 }
 
 func (s *suggestions) get(ctx context.Context, st respond.Store, m *live.Match) (*respond.Result, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	if s.matches == nil {
+		s.matches = make(map[string]*suggestion)
+	}
+	c, ok := s.matches[m.Key]
+	if !ok {
+		c = &suggestion{}
+		s.matches[m.Key] = c
+	}
+	s.mu.Unlock()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	// Sources return the same match until it might have changed.
-	if c, ok := s.matches[m.Key]; ok && c.m == m {
+	if c.m == m {
 		return c.r, nil
 	}
 	r, err := respond.Analyze(ctx, st, m)
 	if err != nil {
 		return nil, err
 	}
-	if s.matches == nil {
-		s.matches = make(map[string]suggestion)
-	}
-	s.matches[m.Key] = suggestion{m: m, r: r}
+	c.m, c.r = m, r
 	return r, nil
 }
 
@@ -949,5 +962,18 @@ func (s *Server) handleTeams(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.template.teams.ExecuteTemplate(w, "layout.html", teamsData{Teams: teams}); err != nil {
 		s.log.Error("render template", "err", err)
+	}
+}
+
+// formatPercent formats a probability as a whole percentage. Rounding would show
+// an outcome that isn't certain as 0% or 100%, so those show as <1% and >99%.
+func formatPercent(p float64) string {
+	switch pct := math.Round(p * 100); {
+	case pct < 1:
+		return "<1%"
+	case pct > 99:
+		return ">99%"
+	default:
+		return fmt.Sprintf("%.0f%%", pct)
 	}
 }

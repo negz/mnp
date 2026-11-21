@@ -1,0 +1,141 @@
+{
+  "key": "mnp-23-10-ADB-TBT",
+  "name": "WK10 ADB @ TBT",
+  "type": "manual",
+  "week": "10",
+  "round": 4,
+  "create_at": 1776055072789,
+  "date": "04/13/2026",
+  "state": "complete",
+  "state_at": 1776189035159,
+  "venue": {
+    "key": "T4B",
+    "name": "4Bs Tavern"
+  },
+  "away": {
+    "name": "Admiraballs",
+    "key": "ADB",
+    "lineup": [
+      {
+        "key": "ac206fee36985efa2026edeb3bc338e647bd11c9",
+        "name": "Bob Lyman",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 4
+      },
+      {
+        "key": "4a3bf8632b37322cb54168a1a0b58889b6de9c1d",
+        "name": "Thomas Homan",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 4
+      },
+      {
+        "key": "72480633c9bfb4bb212e9548f7de3e483e7c54af",
+        "name": "Mohamed Sawani",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 1
+      }
+    ],
+    "ready": true
+  },
+  "home": {
+    "name": "The B Team",
+    "key": "TBT",
+    "lineup": [
+      {
+        "key": "7c763840d930f6e27ab5a692d62134847b9cbe18",
+        "name": "Campbell Hancock",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 5
+      },
+      {
+        "key": "c1f743b5d73716ecd7980e7fddea19920d6241ca",
+        "name": "Jared Gamble",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 3
+      },
+      {
+        "key": "227f787380ce0ab47de30d7d0d0c6c674a07c621",
+        "name": "Andy Bernard",
+        "sub": false,
+        "num_played": 3,
+        "IPR": 2
+      }
+    ],
+    "ready": true
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "games": [
+        {
+          "n": 1,
+          "machine": "007",
+          "player_1": "4a3bf8632b37322cb54168a1a0b58889b6de9c1d",
+          "player_3": "ac206fee36985efa2026edeb3bc338e647bd11c9",
+          "player_2": "227f787380ce0ab47de30d7d0d0c6c674a07c621",
+          "player_4": "7c763840d930f6e27ab5a692d62134847b9cbe18",
+          "done": true,
+          "score_1": 126918520,
+          "score_2": 44406100,
+          "score_3": 48803270,
+          "score_4": 491720670,
+          "points_1": 1,
+          "points_2": 0.5,
+          "points_3": 1,
+          "points_4": 2.5,
+          "score_13": 175721790,
+          "score_24": 536126770,
+          "points_13": 2,
+          "points_24": 3,
+          "away_points": 2,
+          "home_points": 3
+        }
+      ],
+      "done": true,
+      "right_confirmed": {
+        "by": "Campbell Hancock",
+        "at": 1776139659665
+      },
+      "left_confirmed": {
+        "by": "Michael Tomber",
+        "at": 1776139747185
+      }
+    },
+    {
+      "n": 2,
+      "games": [
+        {
+          "n": 1,
+          "machine": "TOTAN",
+          "player_1": "c1f743b5d73716ecd7980e7fddea19920d6241ca",
+          "player_2": "72480633c9bfb4bb212e9548f7de3e483e7c54af",
+          "done": true,
+          "score_1": 3685720,
+          "score_2": 570530,
+          "points_1": 3,
+          "points_2": 0,
+          "points_13": 3,
+          "points_24": 0,
+          "score_13": 3685720,
+          "score_24": 570530,
+          "away_points": 0,
+          "home_points": 3
+        }
+      ],
+      "done": true,
+      "left_confirmed": {
+        "by": "David Chernicoff",
+        "at": 1776141178310
+      },
+      "right_confirmed": {
+        "by": "Michael Tomber",
+        "at": 1776141187223
+      }
+    }
+  ]
+}
