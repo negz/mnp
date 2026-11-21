@@ -27,6 +27,33 @@ const (
 	StateTieBreaker State = "tie-breaker"
 )
 
+// A match has 4 rounds, and a team earns its match bonus points only if everyone
+// in its lineup plays at least 3 games. A full lineup of 10 has exactly enough
+// games for that, so nobody in one can play a 4th without leaving someone else
+// short.
+const (
+	Rounds     = 4
+	MinGames   = 3
+	FullLineup = 10
+)
+
+// Doubles reports whether a round is doubles. Rounds 2 and 3 are singles.
+func Doubles(round int) bool {
+	return round == 1 || round == Rounds
+}
+
+// MustPlay reports whether a player must play in the given round to still play
+// 3 games in the match.
+func MustPlay(p Player, round int) bool {
+	return MinGames-p.NumPlayed > Rounds-round
+}
+
+// CanPlay reports whether a player in a lineup of the given size can play
+// another game without leaving a teammate short of 3.
+func CanPlay(p Player, lineup int) bool {
+	return lineup < FullLineup || p.NumPlayed < MinGames
+}
+
 // A Match is a match as mondaynightpinball.com serves it.
 type Match struct {
 	Key    string  `json:"key"`
