@@ -12,7 +12,7 @@ import (
 // each team's players.
 type responder interface {
 	// respond returns the points our players expect against the other team's
-	// best response to a pick, and who they'd send to each game.
+	// response to a pick, and who they'd send to each game.
 	respond(machines []int, players [][]int) (float64, [][]int)
 
 	// points returns the points our players expect against theirs on a
@@ -20,38 +20,70 @@ type responder interface {
 	points(machine int, ours, theirs []int) float64
 }
 
-// mustBonus is taken off our points against a player who must play, so the best
-// response always sends them. It's far more than a round's points.
+// A preference is what the other team would give up, as they see it, by
+// sending their players against ours on a machine. They respond with whoever
+// gives up least in total. In a short lineup theirs may be missing players.
+type preference func(machine int, ours, theirs []int) float64
+
+// expected returns the points our players expect against theirs on a machine.
+// A team responding as well as it can prefers to hold us to the fewest. The
+// league scores a missing player 1.
+func expected(ours, theirs [][]points.Score) preference {
+	return func(machine int, o, t []int) float64 {
+		ts := make([]points.Score, len(t))
+		for i, p := range t {
+			ts[i] = theirs[p][machine]
+		}
+		if len(o) == 1 {
+			return points.Singles(ours[o[0]][machine], pad(ts)[0])
+		}
+		return points.Doubles([]points.Score{ours[o[0]][machine], ours[o[1]][machine]}, ts)
+	}
+}
+
+// mustBonus is taken off what the other team gives up by sending a player who
+// must play, so they're always sent. It's far more than a round's points.
 const mustBonus = 1000
 
 // singles responds to singles picks. The other team sends a different player to
-// each game, so its best response is an assignment problem.
+// each game, so its response is an assignment problem.
 type singles struct {
 	theirs int // How many players the other team has.
 
 	// expected is the points our player expects against theirs on a machine,
+	// and cost what the other team prefers to give up sending them, both
 	// indexed by machine, then our player, then theirs. If the other team has
 	// fewer players than games, missing players who score 1 follow its own.
 	expected [][][]float64
+	cost     [][][]float64
 	must     []bool // Indexed like expected's players. None if too many must play.
 }
 
-func newSingles(ours, theirs [][]points.Score, must []bool, games int) *singles {
+// newSingles returns a responder for the other team, which sends whoever it
+// prefers. With no preference it responds as well as it can.
+func newSingles(ours, theirs [][]points.Score, must []bool, games int, prefer preference) *singles {
 	n := max(len(theirs), games)
-	s := &singles{theirs: len(theirs), expected: make([][][]float64, len(ours[0])), must: make([]bool, n)}
+	s := &singles{theirs: len(theirs), expected: make([][][]float64, len(ours[0])), cost: make([][][]float64, len(ours[0])), must: make([]bool, n)}
 	if countTrue(must) <= games {
 		copy(s.must, must)
 	}
+	points := expected(ours, theirs)
 	for m := range s.expected {
 		s.expected[m] = make([][]float64, len(ours))
+		s.cost[m] = make([][]float64, len(ours))
 		for o := range ours {
 			s.expected[m][o] = make([]float64, n)
+			s.cost[m][o] = make([]float64, n)
 			for t := range n {
-				var their points.Score // A missing player.
+				var their []int // A missing player.
 				if t < len(theirs) {
-					their = theirs[t][m]
+					their = []int{t}
 				}
-				s.expected[m][o][t] = points.Singles(ours[o][m], their)
+				s.expected[m][o][t] = points(m, []int{o}, their)
+				s.cost[m][o][t] = s.expected[m][o][t]
+				if prefer != nil {
+					s.cost[m][o][t] = prefer(m, []int{o}, their)
+				}
 			}
 		}
 	}
@@ -61,7 +93,7 @@ func newSingles(ours, theirs [][]points.Score, must []bool, games int) *singles 
 func (s *singles) respond(machines []int, players [][]int) (float64, [][]int) {
 	cost := make([][]float64, len(machines))
 	for g, m := range machines {
-		cost[g] = slices.Clone(s.expected[m][players[g][0]])
+		cost[g] = slices.Clone(s.cost[m][players[g][0]])
 		for t, must := range s.must {
 			if must {
 				cost[g][t] -= mustBonus
@@ -149,26 +181,25 @@ func hungarian(cost [][]float64) []int { //nolint:gocognit // A standard algorit
 }
 
 // doubles responds to doubles picks. The other team pairs up its players and
-// sends a pair to each game. Its best response is found game by game,
-// remembering the best way to use each set of its players so far.
+// sends a pair to each game. Its response is found game by game, remembering
+// the least it can give up using each set of its players so far.
 type doubles struct {
-	ours, theirs [][]points.Score // Indexed by player, then machine.
-	options      []option         // Who the other team could send to a game.
-	must         int              // A bit for each player who must play. None if too many must play.
+	expected, prefer preference
+	options          []option // Who the other team could send to a game.
+	must             int      // A bit for each player who must play. None if too many must play.
 
 	// free lists the options that could still be sent once the players in a
 	// mask have been, indexed by mask.
 	free [][]int
 
-	// expected caches the points our pair expects against each option on a
-	// machine, keyed by machine and our pair.
-	expected map[[3]int][]float64
+	// cached is what against returns, keyed by machine and our pair.
+	cached map[[3]int]optionCosts
 
 	// The search asks for many responses, so respond reuses these rather than
-	// allocating them each time. least[g][mask] is the fewest points our
-	// players can be held to in the games before g by sending the players in
-	// mask, and chose is the option sent to game g-1 to get there. reached
-	// lists the masks set in each of least[g].
+	// allocating them each time. least[g][mask] is the least the other team
+	// can give up in the games before g by sending the players in mask, and
+	// chose is the option sent to game g-1 to get there. reached lists the
+	// masks set in each of least[g].
 	least   [][]float64
 	chose   [][]int
 	reached [][]int
@@ -181,13 +212,21 @@ type option struct {
 	mask    int // A bit for each player.
 }
 
-func newDoubles(ours, theirs [][]points.Score, must []bool, games int) *doubles {
+// optionCosts are the points our pair expects against each option on a
+// machine, and what the other team prefers to give up sending it.
+type optionCosts struct {
+	expected, prefer []float64
+}
+
+// newDoubles returns a responder for the other team, which sends whoever it
+// prefers. With no preference it responds as well as it can.
+func newDoubles(ours, theirs [][]points.Score, must []bool, games int, prefer preference) *doubles {
 	size := 1 << len(theirs)
 	d := &doubles{
-		ours:     ours,
-		theirs:   theirs,
+		expected: expected(ours, theirs),
+		prefer:   prefer,
 		free:     make([][]int, size),
-		expected: make(map[[3]int][]float64),
+		cached:   make(map[[3]int]optionCosts),
 		least:    make([][]float64, games+1),
 		chose:    make([][]int, games+1),
 		reached:  make([][]int, games+1),
@@ -230,23 +269,25 @@ func newDoubles(ours, theirs [][]points.Score, must []bool, games int) *doubles 
 }
 
 // against returns the points our pair expects against each option on a
-// machine.
-func (d *doubles) against(machine int, ours []int) []float64 {
+// machine, and what the other team prefers to give up sending it.
+func (d *doubles) against(machine int, ours []int) optionCosts {
 	key := [3]int{machine, ours[0], ours[1]}
-	if e, ok := d.expected[key]; ok {
-		return e
+	if c, ok := d.cached[key]; ok {
+		return c
 	}
-	o := []points.Score{d.ours[ours[0]][machine], d.ours[ours[1]][machine]}
-	e := make([]float64, len(d.options))
+	c := optionCosts{expected: make([]float64, len(d.options))}
 	for i, opt := range d.options {
-		t := make([]points.Score, len(opt.players))
-		for k, p := range opt.players {
-			t[k] = d.theirs[p][machine]
-		}
-		e[i] = points.Doubles(o, t)
+		c.expected[i] = d.expected(machine, ours, opt.players)
 	}
-	d.expected[key] = e
-	return e
+	c.prefer = c.expected
+	if d.prefer != nil {
+		c.prefer = make([]float64, len(d.options))
+		for i, opt := range d.options {
+			c.prefer[i] = d.prefer(machine, ours, opt.players)
+		}
+	}
+	d.cached[key] = c
+	return c
 }
 
 func (d *doubles) respond(machines []int, players [][]int) (float64, [][]int) {
@@ -259,13 +300,13 @@ func (d *doubles) respond(machines []int, players [][]int) (float64, [][]int) {
 	d.least[0][0] = 0
 	d.reached[0] = append(d.reached[0], 0)
 	for g, m := range machines {
-		against := d.against(m, players[g])
+		prefer := d.against(m, players[g]).prefer
 		next, chose := d.least[g+1], d.chose[g+1]
 		for _, mask := range d.reached[g] {
 			total := d.least[g][mask]
 			for _, i := range d.free[mask] {
 				to := mask | d.options[i].mask
-				v := total + against[i]
+				v := total + prefer[i]
 				if math.IsInf(next[to], 1) {
 					d.reached[g+1] = append(d.reached[g+1], to)
 				}
@@ -283,18 +324,18 @@ func (d *doubles) respond(machines []int, players [][]int) (float64, [][]int) {
 		// who must play rather than suggest nothing.
 		end = cheapest(d.least[g], d.reached[g], 0)
 	}
-	total := d.least[g][end]
-
+	var total float64
 	theirs := make([][]int, len(machines))
 	for mask := end; g > 0; g-- {
-		opt := d.options[d.chose[g][mask]]
-		theirs[g-1] = opt.players
-		mask &^= opt.mask
+		i := d.chose[g][mask]
+		total += d.against(machines[g-1], players[g-1]).expected[i]
+		theirs[g-1] = d.options[i].players
+		mask &^= d.options[i].mask
 	}
 	return total, theirs
 }
 
-// cheapest returns the reached mask with the fewest points that includes every
+// cheapest returns the reached mask that gives up least and includes every
 // player in must, or -1 if there isn't one.
 func cheapest(least []float64, reached []int, must int) int {
 	end := -1
@@ -308,7 +349,7 @@ func cheapest(least []float64, reached []int, must int) int {
 
 func (d *doubles) points(machine int, ours, theirs []int) float64 {
 	i := slices.IndexFunc(d.options, func(o option) bool { return slices.Equal(o.players, theirs) })
-	return d.against(machine, ours)[i]
+	return d.against(machine, ours).expected[i]
 }
 
 func countTrue(bs []bool) int {

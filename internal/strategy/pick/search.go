@@ -13,7 +13,7 @@ import (
 type plan struct {
 	machines []int
 	players  [][]int
-	points   float64 // Points our players expect against the best response.
+	points   float64 // Points our players expect against the response searched for.
 	fixed    int     // The first fixed games were pinned, and can't change.
 }
 
@@ -26,7 +26,7 @@ func (p plan) clone() plan {
 }
 
 // search returns the pick that wins our players the most points against the
-// other team's best response, keeping the pinned games. There are far too many
+// other team's response, keeping the pinned games. There are far too many
 // picks to try them all, so it climbs from several random picks to the best
 // pick nearby, and returns the best it finds. Each climb finds the best pick
 // near where it started, so more starts find the best pick more often, but take

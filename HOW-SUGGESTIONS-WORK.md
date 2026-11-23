@@ -58,15 +58,28 @@ so you can choose between them for any reason you like.
 
 ## Picking
 
-Picking is harder, because the other team responds to whatever you pick. So
-mnp.tips assumes they'll respond as well as they can, exactly as mnp.tips would
-suggest to their captain. The "likely to send" players are that response.
+Picking is harder, because the other team responds to whatever you pick, and
+captains rarely respond the way the points say they should. In league
+responses from fall 2022 to fall 2025, captains mostly sent whoever had played
+each machine most in the league, especially at that venue. A player's chances
+against their opponent counted for a little, and sending a high IPR against a
+high IPR for less.
+
+So mnp.tips predicts the other team's response from those habits, and the
+"likely to send" players are that prediction. On 2026's games, which the habits
+weren't worked out from, it put 37% of singles players and 48% of doubles
+players on the game they were really sent to. The response the points suggest
+managed 29% and 40%.
+
+mnp.tips then suggests the pick that gets the most points against that likely
+response. If the other team responds as well as it can instead, the pick never
+gives up more than 0.3 points against the safest pick.
 
 There are billions of possible picks at a 26-machine venue, far too many to try.
 Instead it starts from many random picks and improves each a change at a time
 until no change helps. At 8- and 9-machine venues, where trying every pick is
-possible, this found the top pick in all 17 matchups checked. It's less certain
-at big venues, where there's no way to check.
+possible, this found the safest pick in all 17 matchups checked. It's less
+certain at big venues, where there's no way to check.
 
 On the page you can untick machines and players or add subs. Changing any game
 pins it, and the other picks fit around it.
@@ -87,8 +100,8 @@ a 60%, 70%, 80% or 90% chance to win won about that often. It predicts results
 a little better than IPR alone.
 
 Trust it least for new players and subs with few league games, whose guess is
-mostly their IPR. Picks also assume the other captain responds perfectly, so
-against one who doesn't you may do better than the suggestion.
+mostly their IPR. The likely response is only a guess at habits, so it's
+right about who plays where less than half the time.
 
 These are deliberately left out, because they didn't help predict who wins:
 

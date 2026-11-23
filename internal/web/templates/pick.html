@@ -64,7 +64,7 @@
     {{if isLive .Live}}<p class="live-round"><strong>Live</strong> · {{.Live.Status}}</p>{{end}}
 
     {{with .Result}}
-    <p class="live-round"><strong>Pick these</strong><br><small class="muted">If {{$.Team2}} sends its best players against them, {{$.Team1}} can expect about {{formatPoints .Points}} of {{.MaxPoints}} points. Tap a game to change it, and the other picks will fit around it.</small></p>
+    <p class="live-round"><strong>Pick these</strong><br><small class="muted">If {{$.Team2}} responds the way captains usually do, {{$.Team1}} can expect about {{formatPoints .Points}} of {{.MaxPoints}} points ({{formatPoints .BestResponsePoints}} if {{$.Team2}} responds as well as it can). Tap a game to change it, and the other picks will fit around it.</small></p>
     {{range $i, $g := .Games}}
     <details class="row">
       <summary>
@@ -137,8 +137,8 @@
 <details class="legend">
   <summary>How to read this</summary>
   <dl>
-    <dt>Pick these</dt><dd>The machines, and who should play them, that win {{.Team1}} the most points if {{.Team2}} sends its best players against each. It's what mnp.tips would suggest {{.Team2}} send.</dd>
-    <dt>Likely to send</dt><dd>{{.Team2}}'s best response to all of the picks at once, using each of its players once.</dd>
+    <dt>Pick these</dt><dd>The machines, and who should play them, that win {{.Team1}} the most points against who {{.Team2}} is likely to send. If {{.Team2}} responds as well as it can instead, they give up at most 0.3 points compared with the safest picks.</dd>
+    <dt>Likely to send</dt><dd>Who {{.Team2}} would send if it responds the way captains usually do, mostly sending whoever has played each machine most.</dd>
     <dt>Pinned</dt><dd>A game you've changed. It stays as you set it, and the other picks fit around it. Turn it off to let the suggestions change it again.</dd>
     <dt>To win</dt><dd>The chance {{.Team1}}'s players win the game. In doubles that means taking 3 or more of its 5 points.</dd>
     <dt>Machines</dt><dd>Untick any that are out of order tonight, or that you don't want to pick.</dd>

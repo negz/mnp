@@ -7,9 +7,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 
 	"github.com/negz/mnp/internal/db"
+	"github.com/negz/mnp/internal/habit"
 	"github.com/negz/mnp/internal/live"
 	"github.com/negz/mnp/internal/output"
 	"github.com/negz/mnp/internal/points"
@@ -44,6 +46,7 @@ type Player struct {
 type Round struct {
 	N        int      // 1 to 4.
 	Home     bool     // Whether the picking team is the home team.
+	Venue    string   // Key of the venue the match is at.
 	Machines []string // Keys of the machines that can be picked.
 	Ours     []Player // The picking team's players.
 	Theirs   []Player // The other team's players.
@@ -73,7 +76,7 @@ type Game struct {
 	MachineName string
 	Ours        []Stats // Who to pick to play it.
 	Theirs      []Stats // Who the other team is likely to send.
-	Points      float64 // Points our players expect to win.
+	Points      float64 // Points our players expect to win against Theirs.
 	MaxPoints   int     // Points available.
 	Win         float64 // The chance our players win the game, taking most of its points.
 	Pinned      bool    // Whether the picking team decided on this game.
@@ -81,17 +84,27 @@ type Game struct {
 
 // Result is a suggested set of picks for a round.
 type Result struct {
-	Round      int
-	Doubles    bool
-	Games      []Game   // Strongest first.
-	Points     float64  // Points our players expect to win across the round.
+	Round   int
+	Doubles bool
+	Games   []Game // Strongest first.
+
+	// Points is the points our players expect to win across the round,
+	// against Theirs in each game.
+	Points float64
+
+	// BestResponsePoints is the points our players expect if the other team
+	// responds as well as it can, rather than as it likely will.
+	BestResponsePoints float64
+
 	MaxPoints  int      // Points available across the round.
 	SittingOut []Player // Our players who aren't picked.
 	Unpicked   []string // Names of the machines that aren't picked.
 }
 
 // Analyze suggests picks for a round: the machines, and the players to play
-// them, that win the most points if the other team responds as well as it can.
+// them, that win the most points against how the other team is likely to
+// respond, as captains habitually do. Should the other team respond as well as
+// it can instead, the pick gives up at most 0.3 points against the safest pick.
 func Analyze(ctx context.Context, s Store, r Round) (*Result, error) {
 	doubles := live.Doubles(r.N)
 	games, slots, maxPoints := singlesGames, 1, singlesPoints
@@ -111,6 +124,8 @@ func Analyze(ctx context.Context, s Store, r Round) (*Result, error) {
 		return nil, fmt.Errorf("a lineup has at most %d players, but the other team's has %d", live.FullLineup, len(r.Theirs))
 	case len(r.Theirs) == 0:
 		return nil, errors.New("the other team has nobody to play")
+	case r.Venue == "":
+		return nil, errors.New("the venue is needed to predict how the other team will respond")
 	}
 	pinned, err := pins(r, games, slots)
 	if err != nil {
@@ -126,42 +141,46 @@ func Analyze(ctx context.Context, s Store, r Round) (*Result, error) {
 		return nil, fmt.Errorf("load league typical scores: %w", err)
 	}
 
-	ours, err := score(ctx, s, league, r.Machines, r.Ours, r.Home, true)
+	ours, err := score(ctx, s, league, r.Venue, r.Machines, r.Ours, r.Home, true)
 	if err != nil {
 		return nil, err
 	}
-	theirs, err := score(ctx, s, league, r.Machines, r.Theirs, !r.Home, false)
+	theirs, err := score(ctx, s, league, r.Venue, r.Machines, r.Theirs, !r.Home, false)
 	if err != nil {
 		return nil, err
 	}
 
 	// Working out a doubles response takes longer, but in testing fewer starts
 	// found the best doubles pick as often as more found the best singles pick.
-	var resp responder = newSingles(ours.scores, theirs.scores, must(r.Theirs), games)
+	var best responder = newSingles(ours.scores, theirs.scores, must(r.Theirs), games, nil)
+	var likely responder = newSingles(ours.scores, theirs.scores, must(r.Theirs), games, habitual(habit.Singles(), ours, theirs))
 	starts := 40
 	if doubles {
-		resp = newDoubles(ours.scores, theirs.scores, must(r.Theirs), games)
+		best = newDoubles(ours.scores, theirs.scores, must(r.Theirs), games, nil)
+		likely = newDoubles(ours.scores, theirs.scores, must(r.Theirs), games, habitual(habit.Doubles(), ours, theirs))
 		starts = 12
 	}
-	best, err := search(ctx, len(r.Machines), len(r.Ours), games, slots, must(r.Ours), pinned, starts, resp)
+
+	pick, err := hedge(ctx, len(r.Machines), len(r.Ours), games, slots, must(r.Ours), pinned, starts, likely, best)
 	if err != nil {
 		return nil, fmt.Errorf("search picks: %w", err)
 	}
-	_, response := resp.respond(best.machines, best.players)
+	_, response := likely.respond(pick.machines, pick.players)
 
 	result := &Result{Round: r.N, Doubles: doubles}
+	result.BestResponsePoints, _ = best.respond(pick.machines, pick.players)
 	picked := make(map[int]bool)
-	for g, m := range best.machines {
+	for g, m := range pick.machines {
 		picked[m] = true
 		game := Game{
 			MachineKey:  r.Machines[m],
 			MachineName: output.MachineName(names, r.Machines[m]),
-			Points:      resp.points(m, best.players[g], response[g]),
+			Points:      likely.points(m, pick.players[g], response[g]),
 			MaxPoints:   maxPoints,
-			Pinned:      g < best.fixed,
+			Pinned:      g < pick.fixed,
 		}
 		var o, t []points.Score
-		for _, p := range best.players[g] {
+		for _, p := range pick.players[g] {
 			game.Ours = append(game.Ours, ours.stats[p][m])
 			o = append(o, ours.scores[p][m])
 		}
@@ -181,7 +200,7 @@ func Analyze(ctx context.Context, s Store, r Round) (*Result, error) {
 	slices.SortStableFunc(result.Games, func(a, b Game) int { return cmp.Compare(b.Win, a.Win) })
 
 	used := make(map[int]bool)
-	for _, ps := range best.players {
+	for _, ps := range pick.players {
 		for _, p := range ps {
 			used[p] = true
 		}
@@ -257,19 +276,26 @@ func must(ps []Player) []bool {
 	return out
 }
 
-// scored is how a team's players are likely to score on each machine.
+// scored is how a team's players are likely to score on each machine, and what
+// the habit model knows about sending them to it.
 type scored struct {
-	stats  [][]Stats        // Indexed by player, then machine.
-	scores [][]points.Score // Indexed by player, then machine.
+	stats  [][]Stats          // Indexed by player, then machine.
+	scores [][]points.Score   // Indexed by player, then machine.
+	habits [][]habit.Features // Indexed by player, then machine. Who they'd face isn't known yet.
 }
 
-// score works out how each player is likely to score on each machine.
-func score(ctx context.Context, s Store, league map[string]float64, machines []string, ps []Player, home, picked bool) (scored, error) {
-	out := scored{stats: make([][]Stats, len(ps)), scores: make([][]points.Score, len(ps))}
+// score works out how each player is likely to score on each machine at a
+// venue.
+func score(ctx context.Context, s Store, league map[string]float64, venue string, machines []string, ps []Player, home, picked bool) (scored, error) {
+	out := scored{stats: make([][]Stats, len(ps)), scores: make([][]points.Score, len(ps)), habits: make([][]habit.Features, len(ps))}
 	for i, p := range ps {
 		ms, err := s.GetSinglePlayerMachineStats(ctx, p.Name, "")
 		if err != nil {
 			return scored{}, fmt.Errorf("load stats for %s: %w", p.Name, err)
+		}
+		vs, err := s.GetSinglePlayerMachineStats(ctx, p.Name, venue)
+		if err != nil {
+			return scored{}, fmt.Errorf("load stats at %s for %s: %w", venue, p.Name, err)
 		}
 		rel, err := s.GetRelativeScore(ctx, p.Name, league)
 		if err != nil {
@@ -279,8 +305,13 @@ func score(ctx context.Context, s Store, league map[string]float64, machines []s
 		for _, st := range ms {
 			byMachine[st.MachineKey] = st
 		}
+		atVenue := make(map[string]int, len(vs))
+		for _, st := range vs {
+			atVenue[st.MachineKey] = st.Games
+		}
 		out.stats[i] = make([]Stats, len(machines))
 		out.scores[i] = make([]points.Score, len(machines))
+		out.habits[i] = make([]habit.Features, len(machines))
 		for j, m := range machines {
 			st := byMachine[m]
 			out.stats[i][j] = Stats{Name: p.Name, IPR: p.IPR, Sub: p.Sub, Games: st.Games, P50Score: st.P50Score, P90Score: st.P90Score}
@@ -293,6 +324,12 @@ func score(ctx context.Context, s Store, league map[string]float64, machines []s
 				LeagueGames: rel.Games,
 				Relative:    rel.P50,
 			}, league[m])
+			out.habits[i][j] = habit.Features{IPR: p.IPR, Games: st.Games, VenueGames: atVenue[m]}
+			// Stats count forfeits, scored 1. A player whose typical score
+			// is a forfeit says nothing about how well they play it.
+			if st.P50Score > 1 && league[m] > 0 {
+				out.habits[i][j].Affinity = math.Log(st.P50Score/league[m]) - rel.P50
+			}
 		}
 	}
 	return out, nil
