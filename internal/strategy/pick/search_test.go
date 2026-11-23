@@ -91,15 +91,39 @@ func TestHungarian(t *testing.T) {
 	}
 }
 
-// bestSinglesResponse is the fewest points our players can be held to in a
-// singles round, found by trying every response.
-func bestSinglesResponse(s *singles, machines []int, players [][]int, must []bool) float64 {
-	least := math.Inf(1)
+// preferRandomly returns a preference for responding that has nothing to do
+// with points, but still sends everyone it can.
+func preferRandomly(rng *rand.Rand) preference {
+	cost := make(map[[5]int]float64)
+	return func(machine int, ours, theirs []int) float64 {
+		key := [5]int{machine, -1, -1, -1, -1}
+		copy(key[1:3], ours)
+		copy(key[3:], theirs)
+		// Who plays with who matters, but not in what order.
+		slices.Sort(key[1 : 1+len(ours)])
+		slices.Sort(key[3 : 3+len(theirs)])
+		if _, ok := cost[key]; !ok {
+			cost[key] = rng.Float64() + missingCost*float64(len(ours)-len(theirs))
+		}
+		return cost[key]
+	}
+}
+
+// preferredSinglesResponse is the points our players expect against the
+// response the other team prefers in a singles round, found by trying every
+// response.
+func preferredSinglesResponse(s *singles, prefer preference, machines []int, players [][]int, must []bool) float64 {
+	least, points := math.Inf(1), 0.0
 	permutations(len(s.must), len(machines), func(ts []int) {
 		sent := make(map[int]bool)
-		var total float64
+		var cost, total float64
 		for g, t := range ts {
 			sent[t] = true
+			var their []int
+			if t < s.theirs {
+				their = []int{t}
+			}
+			cost += prefer(machines[g], players[g], their)
 			total += s.expected[machines[g]][players[g][0]][t]
 		}
 		for t, m := range must {
@@ -107,9 +131,11 @@ func bestSinglesResponse(s *singles, machines []int, players [][]int, must []boo
 				return
 			}
 		}
-		least = min(least, total)
+		if cost < least {
+			least, points = cost, total
+		}
 	})
-	return least
+	return points
 }
 
 func TestSinglesRespond(t *testing.T) {
@@ -118,6 +144,7 @@ func TestSinglesRespond(t *testing.T) {
 		reason string
 		theirs int
 		must   []int
+		random bool
 	}{
 		"FullLineup": {
 			reason: "The best response should hold our players to the fewest points.",
@@ -127,6 +154,17 @@ func TestSinglesRespond(t *testing.T) {
 			reason: "The best response should send everyone who must play.",
 			theirs: 10,
 			must:   []int{8, 9},
+		},
+		"Preferred": {
+			reason: "A team that prefers some other response should send who it prefers, and must play.",
+			theirs: 10,
+			must:   []int{8, 9},
+			random: true,
+		},
+		"PreferredShortLineup": {
+			reason: "A short lineup should send everyone it has, whatever it prefers.",
+			theirs: 5,
+			random: true,
 		},
 		"ShortLineup": {
 			reason: "A lineup too short to fill every game should leave missing players in the rest.",
@@ -141,12 +179,19 @@ func TestSinglesRespond(t *testing.T) {
 			for _, m := range tc.must {
 				must[m] = true
 			}
-			s := newSingles(ours, theirs, must, singlesGames)
+			var prefer preference // The best response.
+			if tc.random {
+				prefer = preferRandomly(rng)
+			}
+			s := newSingles(ours, theirs, must, singlesGames, prefer)
+			if prefer == nil {
+				prefer = expected(ours, theirs)
+			}
 			machines := []int{0, 1, 2, 3, 4, 5, 6}
 			players := [][]int{{0}, {1}, {2}, {3}, {4}, {5}, {6}}
 
 			got, sent := s.respond(machines, players)
-			want := bestSinglesResponse(s, machines, players, must)
+			want := preferredSinglesResponse(s, prefer, machines, players, must)
 			if diff := cmp.Diff(want, got, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
 				t.Errorf("\n%s\nrespond(...): -want points, +got:\n%s", tc.reason, diff)
 			}
@@ -178,32 +223,33 @@ func TestSinglesRespond(t *testing.T) {
 	}
 }
 
-// bestDoublesResponse is the fewest points our players can be held to in a
-// doubles round, found by trying every response.
-func bestDoublesResponse(d *doubles, machines []int, players [][]int, must []bool) float64 {
+// preferredDoublesResponse is the points our players expect against the
+// response the other team prefers in a doubles round, found by trying every
+// response.
+func preferredDoublesResponse(d *doubles, prefer preference, machines []int, players [][]int, must []bool) float64 {
 	mask := 0
 	for p, m := range must {
 		if m {
 			mask |= 1 << p
 		}
 	}
-	least := math.Inf(1)
-	var rec func(g, used int, total float64)
-	rec = func(g, used int, total float64) {
+	least, points := math.Inf(1), 0.0
+	var rec func(g, used int, cost, total float64)
+	rec = func(g, used int, cost, total float64) {
 		if g == len(machines) {
-			if used&mask == mask {
-				least = min(least, total)
+			if used&mask == mask && cost < least {
+				least, points = cost, total
 			}
 			return
 		}
 		for _, opt := range d.options {
 			if opt.mask&used == 0 {
-				rec(g+1, used|opt.mask, total+d.points(machines[g], players[g], opt.players))
+				rec(g+1, used|opt.mask, cost+prefer(machines[g], players[g], opt.players), total+d.points(machines[g], players[g], opt.players))
 			}
 		}
 	}
-	rec(0, 0, 0)
-	return least
+	rec(0, 0, 0, 0)
+	return points
 }
 
 func TestDoublesRespond(t *testing.T) {
@@ -212,6 +258,7 @@ func TestDoublesRespond(t *testing.T) {
 		reason string
 		theirs int
 		must   []int
+		random bool
 	}{
 		"FullLineup": {
 			reason: "The best response should hold our players to the fewest points.",
@@ -221,6 +268,17 @@ func TestDoublesRespond(t *testing.T) {
 			reason: "The best response should send everyone who must play.",
 			theirs: 10,
 			must:   []int{7, 8, 9},
+		},
+		"Preferred": {
+			reason: "A team that prefers some other response should send who it prefers, and must play.",
+			theirs: 10,
+			must:   []int{7, 8, 9},
+			random: true,
+		},
+		"PreferredShortLineup": {
+			reason: "A short lineup should send everyone it has, whatever it prefers.",
+			theirs: 7,
+			random: true,
 		},
 		"ShortLineup": {
 			reason: "A lineup too short to fill every game should still send everyone it has.",
@@ -235,12 +293,19 @@ func TestDoublesRespond(t *testing.T) {
 			for _, m := range tc.must {
 				must[m] = true
 			}
-			d := newDoubles(ours, theirs, must, doublesGames)
+			var prefer preference // The best response.
+			if tc.random {
+				prefer = preferRandomly(rng)
+			}
+			d := newDoubles(ours, theirs, must, doublesGames, prefer)
+			if prefer == nil {
+				prefer = expected(ours, theirs)
+			}
 			machines := []int{0, 2, 3, 5}
 			players := [][]int{{0, 1}, {2, 3}, {4, 5}, {6, 7}}
 
 			got, sent := d.respond(machines, players)
-			want := bestDoublesResponse(d, machines, players, must)
+			want := preferredDoublesResponse(d, prefer, machines, players, must)
 			if diff := cmp.Diff(want, got, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
 				t.Errorf("\n%s\nrespond(...): -want points, +got:\n%s", tc.reason, diff)
 			}
@@ -261,10 +326,20 @@ func TestDoublesRespond(t *testing.T) {
 	}
 }
 
-// bestPick is the most points our players can expect against the best
-// response, found by trying every pick of machines and players.
+// bestPick is the most points our players can expect against a response,
+// found by trying every pick of machines and players.
 func bestPick(r responder, machines, players, games, slots int, must []bool, pinned plan) float64 {
 	best := math.Inf(-1)
+	everyPick(machines, players, games, slots, must, pinned, func(ms []int, pl [][]int) {
+		v, _ := r.respond(ms, pl)
+		best = max(best, v)
+	})
+	return best
+}
+
+// everyPick calls fn with every pick of machines and players that includes
+// everyone who must play and keeps the pinned games.
+func everyPick(machines, players, games, slots int, must []bool, pinned plan, fn func(ms []int, pl [][]int)) {
 	permutations(machines, games, func(ms []int) {
 		// Machines are tried in every order, so players need only be
 		// tried in one order per game.
@@ -289,11 +364,9 @@ func bestPick(r responder, machines, players, games, slots int, must []bool, pin
 					return
 				}
 			}
-			v, _ := r.respond(ms, pl)
-			best = max(best, v)
+			fn(ms, pl)
 		})
 	})
-	return best
 }
 
 func TestSearch(t *testing.T) {
@@ -356,10 +429,10 @@ func TestSearch(t *testing.T) {
 			}
 			// Small rounds, so every pick can be tried.
 			games, slots := 3, 1
-			var r responder = newSingles(ours, theirs, nil, games)
+			var r responder = newSingles(ours, theirs, nil, games, nil)
 			if tc.doubles {
 				games, slots = 2, 2
-				r = newDoubles(ours, theirs, nil, games)
+				r = newDoubles(ours, theirs, nil, games, nil)
 			}
 
 			got, err := search(context.Background(), tc.machines, tc.ours, games, slots, must, tc.pinned, 12, r)
@@ -471,6 +544,69 @@ func TestClimb(t *testing.T) {
 			got := climb(tc.start, tc.machines, tc.players, must, tc.r)
 			if diff := cmp.Diff(tc.want, got, cmp.AllowUnexported(plan{})); diff != "" {
 				t.Errorf("\n%s\nclimb(...): -want, +got:\n%s", tc.reason, diff)
+			}
+		})
+	}
+}
+
+func TestHedge(t *testing.T) {
+	rng := rand.New(rand.NewPCG(11, 12))
+	cases := map[string]struct {
+		reason   string
+		doubles  bool
+		machines int
+		ours     int
+		theirs   int
+	}{
+		"Singles": {
+			reason:   "The hedged singles pick should do best against the likely response, without giving up much against the best one.",
+			machines: 5,
+			ours:     4,
+			theirs:   4,
+		},
+		"Doubles": {
+			reason:   "The hedged doubles pick should do best against the likely response, without giving up much against the best one.",
+			doubles:  true,
+			machines: 3,
+			ours:     5,
+			theirs:   5,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			// The safest pick is often also best against the likely response,
+			// so try enough rounds that it sometimes isn't.
+			for range 20 {
+				ours, theirs := randomScores(rng, tc.ours, tc.machines), randomScores(rng, tc.theirs, tc.machines)
+				must := make([]bool, tc.ours)
+				// Small rounds, so every pick can be tried.
+				games, slots := 3, 1
+				var best, likely responder = newSingles(ours, theirs, nil, games, nil), newSingles(ours, theirs, nil, games, preferRandomly(rng))
+				if tc.doubles {
+					games, slots = 2, 2
+					best, likely = newDoubles(ours, theirs, nil, games, nil), newDoubles(ours, theirs, nil, games, preferRandomly(rng))
+				}
+
+				got, err := hedge(context.Background(), tc.machines, tc.ours, games, slots, must, plan{}, 12, likely, best)
+				if err != nil {
+					t.Fatalf("hedge(...): %v", err)
+				}
+
+				floor := bestPick(best, tc.machines, tc.ours, games, slots, must, plan{}) - hedgeMargin
+				want := math.Inf(-1)
+				everyPick(tc.machines, tc.ours, games, slots, must, plan{}, func(ms []int, pl [][]int) {
+					if b, _ := best.respond(ms, pl); b >= floor {
+						v, _ := likely.respond(ms, pl)
+						want = max(want, v)
+					}
+				})
+				if diff := cmp.Diff(want, got.points, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
+					t.Errorf("\n%s\nhedge(...): -want points against the likely response, +got:\n%s", tc.reason, diff)
+				}
+				if b, _ := best.respond(got.machines, got.players); b < floor-1e-9 {
+					t.Errorf("\n%s\nhedge(...): got %.2f points against the best response, want at least %.2f", tc.reason, b, floor)
+				}
 			}
 		})
 	}

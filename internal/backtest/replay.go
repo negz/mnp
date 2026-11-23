@@ -75,12 +75,29 @@ type Game struct {
 // Games missing a player, or where a player scored 1 or less (a forfeit or
 // disqualification), are skipped, and their scores aren't used as evidence.
 func Replay(seasons []mnp.SeasonData, halfLife float64) []Game {
-	type match struct {
-		mnp.MatchData
+	var games []Game
+	walk(seasons, halfLife, func(h *history, m match) {
+		for _, g := range m.Games {
+			if complete(g) {
+				games = append(games, h.Game(m.season, m.rostered, m.MatchData, g))
+			}
+		}
+	})
+	return games
+}
 
-		season   int
-		rostered map[string]bool
-	}
+// A match is a match from the archive, with its season and who was on that
+// season's rosters.
+type match struct {
+	mnp.MatchData
+
+	season   int
+	rostered map[string]bool
+}
+
+// walk calls visit for every match in date order, with the history of every
+// earlier night.
+func walk(seasons []mnp.SeasonData, halfLife float64, visit func(h *history, m match)) {
 	var matches []match
 	for _, s := range seasons {
 		rostered := make(map[string]bool)
@@ -98,7 +115,6 @@ func Replay(seasons []mnp.SeasonData, halfLife float64) []Game {
 	})
 
 	h := newHistory(halfLife)
-	var games []Game
 	for len(matches) > 0 {
 		n := 1
 		for n < len(matches) && matches[n].Date == matches[0].Date {
@@ -108,17 +124,12 @@ func Replay(seasons []mnp.SeasonData, halfLife float64) []Game {
 		matches = matches[n:]
 
 		for _, m := range night {
-			for _, g := range m.Games {
-				if complete(g) {
-					games = append(games, h.Game(m.season, m.rostered, m.MatchData, g))
-				}
-			}
+			visit(h, m)
 		}
 		for _, m := range night {
 			h.Add(m.season, m.MatchData)
 		}
 	}
-	return games
 }
 
 // complete reports whether every player in a game played it.
@@ -150,11 +161,23 @@ type leagueKey struct {
 	machine string
 }
 
+// A playedKey is a player and a machine, and for games at one venue, the
+// venue.
+type playedKey struct {
+	player, machine, venue string
+}
+
 // history is the scores from the nights replayed so far.
 type history struct {
 	halfLife  float64
 	byPlayer  map[string]map[string][]recency.Game // By player, then machine.
 	byMachine map[string][]scored
+
+	// How many games each player has played on each machine, anywhere and
+	// at each venue. Like the live stats, these count forfeits and
+	// disqualifications.
+	played      map[playedKey]int
+	playedVenue map[playedKey]int
 
 	// The league's typical score on each machine, cached until scores are
 	// added. It depends on the season's rosters, so it's cached by season.
@@ -165,10 +188,12 @@ type history struct {
 // half-life in seasons.
 func newHistory(halfLife float64) *history {
 	return &history{
-		halfLife:  halfLife,
-		byPlayer:  make(map[string]map[string][]recency.Game),
-		byMachine: make(map[string][]scored),
-		league:    make(map[leagueKey]float64),
+		halfLife:    halfLife,
+		byPlayer:    make(map[string]map[string][]recency.Game),
+		byMachine:   make(map[string][]scored),
+		played:      make(map[playedKey]int),
+		playedVenue: make(map[playedKey]int),
+		league:      make(map[leagueKey]float64),
 	}
 }
 
@@ -177,6 +202,8 @@ func (h *history) Add(season int, m mnp.MatchData) {
 	clear(h.league)
 	for _, g := range m.Games {
 		for _, r := range g.Results {
+			h.played[playedKey{player: r.PlayerName, machine: g.MachineKey}]++
+			h.playedVenue[playedKey{player: r.PlayerName, machine: g.MachineKey, venue: m.Venue.Key}]++
 			if r.Score <= 1 {
 				continue
 			}

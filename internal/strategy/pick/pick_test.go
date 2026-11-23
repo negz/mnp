@@ -12,9 +12,10 @@ import (
 )
 
 type fakeStore struct {
-	machines []string
-	stats    map[string][]db.PlayerMachineStats
-	relative map[string]db.RelativeScore
+	machines   []string
+	stats      map[string][]db.PlayerMachineStats
+	venueStats map[string][]db.PlayerMachineStats // At any venue.
+	relative   map[string]db.RelativeScore
 }
 
 func (s *fakeStore) GetLeagueP50(_ context.Context) (map[string]float64, error) {
@@ -33,7 +34,10 @@ func (s *fakeStore) GetMachineNames(_ context.Context) (map[string]string, error
 	return names, nil
 }
 
-func (s *fakeStore) GetSinglePlayerMachineStats(_ context.Context, name, _ string) ([]db.PlayerMachineStats, error) {
+func (s *fakeStore) GetSinglePlayerMachineStats(_ context.Context, name, venue string) ([]db.PlayerMachineStats, error) {
+	if venue != "" {
+		return s.venueStats[name], nil
+	}
 	return s.stats[name], nil
 }
 
@@ -60,6 +64,7 @@ func TestAnalyze(t *testing.T) {
 			round: Round{
 				N:        2,
 				Home:     true,
+				Venue:    "V",
 				Machines: []string{"M1", "M2", "M3", "M4", "M5", "M6", "M7", "M8"},
 				Ours:     []Player{{Name: "A1", IPR: 3}, {Name: "A2", IPR: 3}, {Name: "A3", IPR: 3}, {Name: "A4", IPR: 3}, {Name: "A5", IPR: 3}, {Name: "A6", IPR: 3}, {Name: "A7", IPR: 3}, {Name: "A8", IPR: 3}},
 				Theirs:   []Player{{Name: "B1", IPR: 3}, {Name: "B2", IPR: 3}, {Name: "B3", IPR: 3}, {Name: "B4", IPR: 3}, {Name: "B5", IPR: 3}, {Name: "B6", IPR: 3}, {Name: "B7", IPR: 3}},
@@ -100,6 +105,7 @@ func TestAnalyze(t *testing.T) {
 			reason: "Each of our specialist pairs should play their machine, against theirs, and our weak player should sit out.",
 			round: Round{
 				N:        1,
+				Venue:    "V",
 				Machines: []string{"M1", "M2", "M3", "M4", "M5"},
 				Ours:     []Player{{Name: "A1"}, {Name: "A2"}, {Name: "A3"}, {Name: "A4"}, {Name: "A5"}, {Name: "A6"}, {Name: "A7"}, {Name: "A8"}, {Name: "A9"}},
 				Theirs:   []Player{{Name: "B1"}, {Name: "B2"}, {Name: "B3"}, {Name: "B4"}, {Name: "B5"}, {Name: "B6"}, {Name: "B7"}, {Name: "B8"}},
@@ -153,7 +159,7 @@ func TestAnalyze(t *testing.T) {
 			}
 			opts := []cmp.Option{
 				cmpopts.IgnoreFields(Game{}, "Points", "Win"),
-				cmpopts.IgnoreFields(Result{}, "Points"),
+				cmpopts.IgnoreFields(Result{}, "Points", "BestResponsePoints"),
 				// Games are in order of the chance to win them, which
 				// these cases don't pin down.
 				cmpopts.SortSlices(func(a, b Game) bool { return a.MachineKey < b.MachineKey }),
@@ -173,6 +179,9 @@ func TestAnalyze(t *testing.T) {
 			if diff := cmp.Diff(total, got.Points, cmpopts.EquateApprox(0, 1e-9)); diff != "" {
 				t.Errorf("\n%s\nAnalyze(...): round points should add up its games' points: -want, +got:\n%s", tc.reason, diff)
 			}
+			if got.BestResponsePoints > got.Points+1e-9 {
+				t.Errorf("\n%s\nAnalyze(...): got %.2f points against the best response, more than %.2f against the likely one", tc.reason, got.BestResponsePoints, got.Points)
+			}
 		})
 	}
 }
@@ -191,45 +200,49 @@ func TestAnalyzeErrors(t *testing.T) {
 	}{
 		"TooFewMachines": {
 			reason: "A singles round can't be picked from fewer than 7 machines.",
-			round:  Round{N: 2, Machines: []string{"M1", "M2"}, Ours: players(7), Theirs: players(7)},
+			round:  Round{N: 2, Venue: "V", Machines: []string{"M1", "M2"}, Ours: players(7), Theirs: players(7)},
 		},
 		"TooFewPlayers": {
 			reason: "A doubles round can't be picked with fewer than 8 players.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(7), Theirs: players(8)},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(7), Theirs: players(8)},
 		},
 		"PinnedMachineCantBePicked": {
 			reason: "A machine that can't be picked can't be pinned.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M9", Players: []string{"P0", "P1"}}}},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M9", Players: []string{"P0", "P1"}}}},
 		},
 		"PinnedPlayerCantPlay": {
 			reason: "A player who can't play can't be pinned.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M1", Players: []string{"P0", "P9"}}}},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M1", Players: []string{"P0", "P9"}}}},
 		},
 		"PinnedPlayerTwice": {
 			reason: "A player can't be pinned to two games.",
-			round: Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{
+			round: Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{
 				{Machine: "M1", Players: []string{"P0", "P1"}},
 				{Machine: "M2", Players: []string{"P1", "P2"}},
 			}},
 		},
 		"PinnedMachineTwice": {
 			reason: "A machine can't be pinned to two games.",
-			round: Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{
+			round: Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{
 				{Machine: "M1", Players: []string{"P0", "P1"}},
 				{Machine: "M1", Players: []string{"P2", "P3"}},
 			}},
 		},
 		"PinnedTooFewPlayers": {
 			reason: "A doubles game can't be pinned to one player.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M1", Players: []string{"P0"}}}},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8), Pinned: []Pin{{Machine: "M1", Players: []string{"P0"}}}},
 		},
 		"LineupTooBig": {
 			reason: "A lineup can't have more than 10 players.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(11)},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(11)},
 		},
 		"NobodyToRespond": {
 			reason: "A round can't be picked against nobody.",
-			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8)},
+			round:  Round{N: 4, Venue: "V", Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8)},
+		},
+		"NoVenue": {
+			reason: "A round can't be picked without knowing where it's played.",
+			round:  Round{N: 4, Machines: []string{"M1", "M2", "M3", "M4"}, Ours: players(8), Theirs: players(8)},
 		},
 	}
 	for name, tc := range cases {

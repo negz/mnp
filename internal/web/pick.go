@@ -171,7 +171,7 @@ func (s *Server) handlePick(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pr := pick.Round{N: data.Round, Home: home, Ours: data.Ours.playing(), Theirs: data.Theirs.playing()}
+	pr := pick.Round{N: data.Round, Home: home, Venue: data.Venue, Ours: data.Ours.playing(), Theirs: data.Theirs.playing()}
 	for _, m := range data.Machines {
 		if m.Checked {
 			pr.Machines = append(pr.Machines, m.Key)
