@@ -2,11 +2,13 @@
 package backtest
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
 	"github.com/negz/mnp/internal/backtest"
 	"github.com/negz/mnp/internal/cache"
+	"github.com/negz/mnp/internal/habit"
 	"github.com/negz/mnp/internal/mnp"
 	"github.com/negz/mnp/internal/output"
 	"github.com/negz/mnp/internal/points"
@@ -19,6 +21,7 @@ type Command struct {
 	From    int    `default:"16"                                                                              help:"First season to measure."`
 	To      int    `default:"22"                                                                              help:"Last season to measure."`
 	Tune    bool   `help:"Tune the model's parameters on the measured seasons, starting from the given ones."`
+	Habits  bool   `help:"Fit how captains respond on the measured seasons, and check it on later seasons."`
 
 	HalfLife     float64   `help:"Seasons for a score to count half as much."`
 	Spread       *float64  `help:"Standard deviation of log scores."`
@@ -53,6 +56,13 @@ func (c *Command) Run() error {
 		return err
 	}
 
+	if c.Habits {
+		if c.Tune {
+			return errors.New("--habits fits how captains respond, so it can't also --tune the points model")
+		}
+		return c.habits(seasons, halfLife, m)
+	}
+
 	var games []backtest.Game
 	for _, g := range backtest.Replay(seasons, halfLife) {
 		if g.Season >= c.From && g.Season <= c.To {
@@ -80,6 +90,51 @@ func (c *Command) Run() error {
 		fmt.Println()
 	}
 	return nil
+}
+
+// habits fits how captains respond in singles and doubles on the measured
+// seasons, and reports how often it, and the points model, predict where
+// players were sent in later seasons.
+func (c *Command) habits(seasons []mnp.SeasonData, halfLife float64, m points.Model) error {
+	responses := backtest.Responses(seasons, halfLife, m)
+	format := map[bool]string{false: "singles", true: "doubles"}
+	rows := make([][]string, 0, 2)
+	for _, doubles := range []bool{false, true} {
+		var fit, check []backtest.Response
+		for _, r := range responses {
+			switch {
+			case r.Doubles != doubles || r.Season < c.From:
+			case r.Season <= c.To:
+				fit = append(fit, r)
+			default:
+				check = append(check, r)
+			}
+		}
+		if len(fit) == 0 || len(check) == 0 {
+			return fmt.Errorf("need responses in seasons %d to %d to fit, and later ones to check", c.From, c.To)
+		}
+		fitted := backtest.FitHabits(fit)
+		fmt.Printf("Fitted %s: %+v\n", format[doubles], fitted)
+		inUse := habit.Singles()
+		if doubles {
+			inUse = habit.Doubles()
+		}
+
+		var random float64
+		for _, r := range check {
+			random += 1 / float64(len(r.Features[0]))
+		}
+		rows = append(rows, []string{
+			format[doubles],
+			fmt.Sprint(len(check)),
+			fmt.Sprintf("%.1f%%", 100*backtest.Placed(check, func(r backtest.Response, p, g int) float64 { return fitted.Utility(r.Features[p][g]) })),
+			fmt.Sprintf("%.1f%%", 100*backtest.Placed(check, func(r backtest.Response, p, g int) float64 { return inUse.Utility(r.Features[p][g]) })),
+			fmt.Sprintf("%.1f%%", 100*backtest.Placed(check, func(r backtest.Response, p, g int) float64 { return r.Expected[p][g] })),
+			fmt.Sprintf("%.1f%%", 100*random/float64(len(check))),
+		})
+	}
+	fmt.Printf("\nPlayers sent where predicted, in seasons after %d:\n\n", c.To)
+	return output.Table(os.Stdout, []string{"Format", "Rounds", "Habits fitted", "Habits in use", "Points model", "Random"}, rows)
 }
 
 func (c *Command) model() (points.Model, error) {
